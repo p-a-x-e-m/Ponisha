@@ -579,16 +579,24 @@ class BotApp:
         return self._thread
 
     def run_terminal(self, plain: bool = False, level: str = "important") -> None:
-        """Terminal entry: build the monitor, then hand over to the panel."""
-        from ponishabot.panel import run_panel, run_plain
+        """Terminal entry: build the monitor, then hand over to the TUI."""
+        from ponishabot.tui import can_run_tui, run_plain, run_tui
+
+        # Decide the mode BEFORE touching authentication. `build_monitor()`
+        # signs in and can launch Chrome, and doing that first meant a piped or
+        # redirected run still opened a browser — which then crashed on a host
+        # with no display, instead of simply streaming the log as asked.
+        if plain or not can_run_tui():
+            run_plain(self)
+            return
 
         if not self.build_monitor():
             return
 
         def handle_interrupt(signum, frame):
-            # Raising here lets the panel's own KeyboardInterrupt path run, so
-            # the driver is closed by the `finally` below rather than leaving
-            # a Chrome window behind.
+            # Raising here lets the TUI's own KeyboardInterrupt path run, so the
+            # driver is closed by the `finally` below rather than leaving a
+            # Chrome window behind.
             logger.info("Interrupt signal received, shutting down...")
             raise KeyboardInterrupt
 
@@ -601,10 +609,7 @@ class BotApp:
             self.start_monitor_thread()
 
         try:
-            if plain:
-                run_plain(self)
-            else:
-                run_panel(self, level=level)
+            run_tui(self, level=level)
         except KeyboardInterrupt:
             logger.info("Stopped by user")
         finally:

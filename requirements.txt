@@ -12,9 +12,12 @@ beautifulsoup4==4.12.3
 requests>=2.33.0
 pyyaml>=6.0.3
 pycryptodome>=3.20
-# Terminal panel (`python main.py`). Optional at runtime -- main.py falls back
-# to plain log streaming when it is missing -- but installed by default so the
-# documented command shows the panel rather than a warning.
+# Terminal UI (`python main.py`). Optional at runtime -- the TUI falls back to
+# plain log streaming when either is missing -- but installed by default so the
+# documented command opens the UI rather than printing a warning.
+# textual pulls in rich itself; both are pinned here so a version bump of one
+# cannot silently change how the other renders.
+textual>=8.0
 rich>=13.0
 django>=5.0
 # gunicorn is NOT used by this project (the service runs `manage.py bot`) and

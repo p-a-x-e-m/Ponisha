@@ -67,7 +67,7 @@ bidder           فرم پیشنهاد را با سلنیوم پر و ارسال
 | [ponishabot/models.py](ponishabot/models.py) | 64 | `Project` / `Profile` / `BidPlan` |
 | [ponishabot/monitor.py](ponishabot/monitor.py) | 269 | حلقهٔ پایش، فیلتر، gate سهمیه |
 | [ponishabot/notifier.py](ponishabot/notifier.py) | 94 | ارسال اعلان تلگرام |
-| [ponishabot/panel.py](ponishabot/panel.py) | 558 | پنل ترمینال: وضعیت زنده، کلیدها، فیلتر لاگ |
+| [ponishabot/tui/](ponishabot/tui/) | 700 | رابط کاربری متنی: صفحه‌ها، کلیدها، فیلتر لاگ |
 | [ponishabot/paths.py](ponishabot/paths.py) | 23 | مسیر همهٔ فایل‌ها (نسبت به ریشه، نه CWD) |
 | [ponishabot/scraper.py](ponishabot/scraper.py) | 550 | اسکرپ لیستینگ/جزئیات، خواندن سهمیه |
 | [ponishabot/skills.py](ponishabot/skills.py) | 120 | کاتالوگ مهارت‌های پونیشا (کش ۷ روزه) |
@@ -141,9 +141,10 @@ python main.py --plain              # فقط لاگ، بدون پنل
 python manage.py bot_login          # باز کردن کروم برای لاگین دستی
 ```
 
-### `main.py` — پنل ترمینال
+### `main.py` — رابط کاربری متنی (TUI)
 
-همان کاری را می‌کند که داشبورد می‌کند، بدون باز کردن مرورگر: وضعیت زنده و کنترل.
+همان کاری را می‌کند که داشبورد می‌کند، بدون باز کردن مرورگر: وضعیت زنده،
+پروژه‌ها، **همهٔ تنظیمات**، و **ورود** — همه داخل ترمینال.
 
 ```
 ┌─ ponishabot ─────────────────────────────[ DRY_RUN ]─┐
@@ -157,30 +158,71 @@ python manage.py bot_login          # باز کردن کروم برای لاگی
 │ 16:32 AI: bid 7,700,000 Toman — matched              │
 │ 16:32 Rejected: طراحی لوگو (overlap 20% < 50%)       │
 └──────────────────────────────────────────────────────┘
- s توقف  d dry-run=خاموش  l ورود  v لاگ  c پاک‌کردن  q خروج
+ Tab صفحه بعد · ↑↓ حرکت · Enter تأیید · Esc برگشت · q خروج
 ```
 
-| آرگومان | پیش‌فرض | توضیح |
-|---|---|---|
-| `--plain` | خاموش | به‌جای پنل، فقط لاگ را بریزد |
-| `--log-level` | `important` | `important` (پیش‌فرض) · `info` · `debug` |
+#### صفحه‌ها
+
+`Tab` و `Shift+Tab` بین این پنج صفحه می‌چرخند:
+
+| صفحه | چه‌کار می‌کند |
+|---|---|
+| **داشبورد** | وضعیت زنده، آخرین پیشنهادها، شروع/توقف |
+| **پروژه‌ها** | جدول پروژه‌های اسکن‌شده؛ `Enter` جزئیات تصمیم، `/` جست‌وجو، `b` ارسال پیشنهاد |
+| **تنظیمات** | همهٔ تنظیمات؛ `Tab` بین فیلدها، `Ctrl+S` ذخیره، `Esc` لغو |
+| **ورود** | شمارهٔ موبایل → کد پیامک، یا `o` برای ورود با مرورگر |
+| **لاگ** | لاگ زنده؛ `f` سطح، `n` نویز، `c` پاک‌کردن |
+
+#### کلیدها
 
 | کلید | کار |
 |---|---|
-| `s` | شروع / توقف مانیتور |
-| `d` | روشن/خاموش کردن `dry_run` |
-| `l` | باز کردن مرورگر برای ورود |
-| `v` | چرخش سطح لاگ (important → debug → info) |
-| `c` | پاک کردن لاگ نمایش‌داده‌شده |
-| `q` | خروج تمیز (درایور کروم بسته می‌شود) |
+| `Tab` / `Shift+Tab` | صفحهٔ بعد / قبل |
+| `↑` `↓` یا `k` `j` | حرکت در فهرست‌ها |
+| `Enter` | تأیید / جزئیات / ویرایش |
+| `Esc` | برگشت / لغو ویرایش |
+| `q` | خروج (درایور کروم بسته می‌شود) |
+
+کلیدهای داخل هر صفحه:
+
+| صفحه | کلید | کار |
+|---|---|---|
+| داشبورد | `s` | شروع / توقف مانیتور |
+| داشبورد | `d` | روشن/خاموش کردن `dry_run` |
+| پروژه‌ها | `Enter` | جزئیات تصمیم (قیمت، رقبا، دلیل) |
+| پروژه‌ها | `/` | رفتن به فیلد جست‌وجو |
+| پروژه‌ها | `b` | ارسال دستی پیشنهاد (با `dry_run` غیرفعال) |
+| تنظیمات | `Ctrl+S` | ذخیره در `config.yaml` |
+| تنظیمات | `Esc` | لغو تغییرات ذخیره‌نشده |
+| ورود | `Enter` | ارسال کد، سپس تأیید کد |
+| ورود | `o` | ورود با مرورگر (کروم) |
+| لاگ | `f` | چرخش سطح (important → debug → info) |
+| لاگ | `n` | نمایش/پنهان‌کردن نویز |
+| لاگ | `c` | پاک‌کردن |
+
+> **چرا کلید شماره‌ای برای صفحه‌ها نیست:** یک عدد که در سطح برنامه bind شود،
+> وقتی فیلد متنی فوکوس دارد هرگز به برنامه نمی‌رسد. یعنی روی داشبورد کار می‌کرد
+> و روی صفحهٔ ورود — همان‌جایی که تایپ عدد کل کار است — بی‌صدا می‌شکست. `Tab`
+> همیشه می‌رسد، پس تنها راه بین صفحه‌ها همان است.
+
+#### آرگومان‌ها
+
+| آرگومان | پیش‌فرض | توضیح |
+|---|---|---|
+| `--plain` | خاموش | به‌جای TUI، فقط لاگ را بریزد |
+| `--log-level` | `important` | سطح اولیهٔ لاگ |
 
 > **لاگ هوشمند فیلتر می‌شود.** یک اجرای سالم پر از `Forex fetch failed` است که
-> هزار بار تکرار می‌شود و بقیهٔ لاگ را زیر خودش می‌برد. پنل خطوط تکراری را جمع
+> هزار بار تکرار می‌شود و بقیهٔ لاگ را زیر خودش می‌برد. TUI خطوط تکراری را جمع
 > می‌کند (`×۹`) و نویز شناخته‌شده را پنهان می‌کند — در یک نمونه، **۴۸۱۷ خط خام به
-> ۳۰۳ ردیف خواندنی** رسید. کلید `v` همه‌چیز را نشان می‌دهد.
+> ۳۰۳ ردیف خواندنی** رسید. کلید `n` همه‌چیز را نشان می‌دهد.
 
-> **تخریب نرم:** اگر `rich` نصب نباشد یا خروجی به فایل/پایپ برود، خودش به حالت
-> لاگ‌محور برمی‌گردد و پیام می‌دهد — نه کرش.
+> **تنظیمات ذخیره می‌شود.** `Ctrl+S` در صفحهٔ تنظیمات، همان اعتبارسنجی داشبورد را
+> اجرا می‌کند (مقدار خراب رد می‌شود، مقدار خارج از بازه کلیپ می‌شود) و بعد در
+> `config.yaml` می‌نویسد — پس تنظیمات آخرین اسکن به یاد می‌ماند.
+
+> **تخریب نرم:** اگر `textual` نصب نباشد یا خروجی به فایل/پایپ برود، خودش به
+> حالت لاگ‌محور برمی‌گردد و پیام می‌دهد — نه کرش.
 
 ### `manage.py bot`
 
@@ -620,8 +662,8 @@ sudo systemctl enable --now ponishabot
 ## ساختار پوشه‌ها
 
 ```
-main.py                  ورودی ترمینال (پنل تعاملی)
-ponishabot/panel.py      خود پنل ترمینال (وضعیت، کلیدها، فیلتر لاگ)
+main.py                  ورودی ترمینال (TUI)
+ponishabot/tui/          خود TUI (صفحه‌ها، کلیدها، bridge منطق خالص)
 manage.py                ورودی وب جنگو (`python manage.py bot`)
 web/                     تنظیمات پروژهٔ جنگو
 dashboard/               اپ وب: ویوها، تمپلیت‌ها، استاتیک
@@ -713,7 +755,7 @@ bidder           fills and submits the proposal form with Selenium
 | [ponishabot/models.py](ponishabot/models.py) | 64 | `Project` / `Profile` / `BidPlan` |
 | [ponishabot/monitor.py](ponishabot/monitor.py) | 269 | Poll loop, filtering, quota gate |
 | [ponishabot/notifier.py](ponishabot/notifier.py) | 94 | Telegram alerts |
-| [ponishabot/panel.py](ponishabot/panel.py) | 558 | Terminal panel: live status, keys, log filter |
+| [ponishabot/tui/](ponishabot/tui/) | 700 | Terminal UI: screens, keys, log filter |
 | [ponishabot/paths.py](ponishabot/paths.py) | 23 | Every file path (anchored to the repo root, not CWD) |
 | [ponishabot/scraper.py](ponishabot/scraper.py) | 550 | Listing/detail scraping, quota read |
 | [ponishabot/skills.py](ponishabot/skills.py) | 120 | ponisha skill taxonomy (7-day cache) |
@@ -786,9 +828,10 @@ python main.py --plain              # logs only, no panel
 python manage.py bot_login          # open Chrome for a manual login
 ```
 
-### `main.py` — terminal panel
+### `main.py` — terminal UI (TUI)
 
-Does what the dashboard does, without opening a browser: live status and controls.
+Does what the dashboard does, without opening a browser: live status, projects,
+**every setting**, and **login** — all inside the terminal.
 
 ```
 ┌─ ponishabot ─────────────────────────────[ DRY_RUN ]─┐
@@ -802,29 +845,71 @@ Does what the dashboard does, without opening a browser: live status and control
 │ 16:32 AI: bid 7,700,000 Toman — matched                │
 │ 16:32 Rejected: logo design (overlap 20% < 50%)        │
 └───────────────────────────────────────────────────────┘
- s stop  d dry-run=off  l login  v log  c clear  q quit
+ Tab next · ↑↓ move · Enter confirm · Esc back · q quit
 ```
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--plain` | off | stream the log instead of the panel |
-| `--log-level` | `important` | `important` · `info` · `debug` |
+#### Screens
+
+`Tab` and `Shift+Tab` cycle through these five:
+
+| Screen | What it does |
+|---|---|
+| **Dashboard** | live status, recent proposals, start/stop |
+| **Projects** | table of scanned projects; `Enter` shows the decision, `/` searches, `b` bids |
+| **Settings** | every setting; `Tab` between fields, `Ctrl+S` saves, `Esc` reverts |
+| **Login** | mobile → SMS code, or `o` for browser login |
+| **Log** | live log; `f` level, `n` noise, `c` clear |
+
+#### Keys
 
 | Key | Action |
 |---|---|
-| `s` | start / stop the monitor |
-| `d` | toggle `dry_run` |
-| `l` | open the browser to log in |
-| `v` | cycle the log level (important → debug → info) |
-| `c` | clear the displayed log |
-| `q` | clean exit (closes the Chrome driver) |
+| `Tab` / `Shift+Tab` | next / previous screen |
+| `↑` `↓` or `k` `j` | move through lists |
+| `Enter` | confirm / details / edit |
+| `Esc` | back / cancel an edit |
+| `q` | quit (closes the Chrome driver) |
+
+Per screen:
+
+| Screen | Key | Action |
+|---|---|---|
+| Dashboard | `s` | start / stop the monitor |
+| Dashboard | `d` | toggle `dry_run` |
+| Projects | `Enter` | decision detail (price, rivals, reason) |
+| Projects | `/` | focus the search box |
+| Projects | `b` | bid manually (disabled while `dry_run`) |
+| Settings | `Ctrl+S` | save to `config.yaml` |
+| Settings | `Esc` | discard unsaved edits |
+| Login | `Enter` | send the code, then verify it |
+| Login | `o` | log in through Chrome |
+| Log | `f` | cycle the level (important → debug → info) |
+| Log | `n` | show / hide noise |
+| Log | `c` | clear |
+
+> **Why there is no numeric screen shortcut:** a digit bound at the app level
+> never reaches the app while a text field has focus. It would therefore work on
+> the dashboard and silently fail on the login screen — the one screen where
+> typing a number is the whole point. `Tab` always arrives, so it is the only
+> way between screens.
+
+#### Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--plain` | off | stream the log instead of the TUI |
+| `--log-level` | `important` | initial log level |
 
 > **The log is filtered, not dumped.** A healthy run is full of `Forex fetch
-> failed` repeating endlessly, which buries everything else. The panel collapses
+> failed` repeating endlessly, which buries everything else. The TUI collapses
 > repeats into a count (`×9`) and hides known noise — in one real sample, **4,817
-> raw lines became 303 readable rows**. `v` shows everything.
+> raw lines became 303 readable rows**. `n` shows everything.
 
-> **Degrades instead of breaking.** With `rich` missing, or output piped to a
+> **Settings persist.** `Ctrl+S` on the settings screen runs the same validation
+> the dashboard does (bad values are refused, out-of-range ones are clamped) and
+> writes `config.yaml`, so the last scan's settings are remembered.
+
+> **Degrades instead of breaking.** With `textual` missing, or output piped to a
 > file, it falls back to plain log streaming and says so — never an exception.
 
 ### `manage.py bot`
@@ -1272,8 +1357,8 @@ cycle (Selenium + AI) can finish. Production runs `DJANGO_DEBUG=0`, and
 ## Layout
 
 ```
-main.py                  terminal entry (interactive panel)
-ponishabot/panel.py      the terminal panel itself (status, keys, log filter)
+main.py                  terminal entry (TUI)
+ponishabot/tui/          the TUI itself (screens, keys, pure-logic bridge)
 manage.py                Django web entry (`python manage.py bot`)
 web/                     Django project settings
 dashboard/               web app: views, templates, static

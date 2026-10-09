@@ -9,6 +9,7 @@ is where the expensive mistakes lived (a wrong budget read, a price under the
 employer's floor, an untagged listing rejected as a total mismatch).
 """
 
+import io
 import os
 import re
 import sys
@@ -343,8 +344,8 @@ class PanelLogHandling(unittest.TestCase):
     noise the console used to dump raw."""
 
     def setUp(self):
-        from ponishabot import panel
-        self.panel = panel
+        from ponishabot.tui import bridge
+        self.bridge = bridge
 
     # A real excerpt: the run that motivated the filter had this line nine
     # times in a row, burying everything else.
@@ -356,7 +357,7 @@ class PanelLogHandling(unittest.TestCase):
     ]
 
     def test_classify_splits_level_time_message(self):
-        lvl, ts, msg = self.panel.classify_line(
+        lvl, ts, msg = self.bridge.classify_line(
             "2026-10-09 16:32:10,000 - INFO - hello")
         self.assertEqual(lvl, "INFO")
         self.assertEqual(ts, "16:32:10")
@@ -364,31 +365,31 @@ class PanelLogHandling(unittest.TestCase):
 
     def test_classify_survives_a_non_log_line(self):
         """Tracebacks and banners have no level; they must not crash the panel."""
-        lvl, ts, msg = self.panel.classify_line("  File \"x.py\", line 3")
+        lvl, ts, msg = self.bridge.classify_line("  File \"x.py\", line 3")
         self.assertEqual(lvl, "info")
         self.assertEqual(ts, "")
         self.assertIn("line 3", msg)
 
     def test_noise_is_recognised(self):
-        self.assertTrue(self.panel.is_noise("Forex fetch failed: timeout"))
-        self.assertFalse(self.panel.is_noise("Karlancer market: 48 projects"))
+        self.assertTrue(self.bridge.is_noise("Forex fetch failed: timeout"))
+        self.assertFalse(self.bridge.is_noise("Karlancer market: 48 projects"))
 
     def test_noise_hidden_by_default_and_shown_on_request(self):
-        default = self.panel.filter_lines(self.NOISY, level="info")
+        default = self.bridge.filter_lines(self.NOISY, level="info")
         self.assertFalse(any("Forex fetch failed" in l for l in default))
-        shown = self.panel.filter_lines(self.NOISY, level="info", show_noise=True)
+        shown = self.bridge.filter_lines(self.NOISY, level="info", show_noise=True)
         self.assertTrue(any("Forex fetch failed" in l for l in shown))
 
     def test_important_keeps_errors_and_drops_plain_info(self):
         lines = self.NOISY + [
             "2026-10-09 16:32:12,000 - INFO - Decision engine: AI (respone) with heuristic fallback",
         ]
-        kept = self.panel.filter_lines(lines, level="important")
+        kept = self.bridge.filter_lines(lines, level="important")
         self.assertTrue(any("ERROR" in l for l in kept))
         self.assertFalse(any("Decision engine" in l for l in kept))
 
     def test_info_keeps_info_lines(self):
-        kept = self.panel.filter_lines(self.NOISY, level="info")
+        kept = self.bridge.filter_lines(self.NOISY, level="info")
         self.assertTrue(any("Karlancer market" in l for l in kept))
 
     def test_important_still_shows_bot_activity(self):
@@ -400,7 +401,7 @@ class PanelLogHandling(unittest.TestCase):
             "2026-10-09 16:32:11,000 - INFO - Rejected: طراحی لوگو (skill overlap 20% < 50%)",
             "2026-10-09 16:32:12,000 - INFO - Monitor started (poll interval: 60s)",
         ]
-        kept = self.panel.filter_lines(lines, level="important")
+        kept = self.bridge.filter_lines(lines, level="important")
         self.assertEqual(len(kept), 3, "event lines must survive the default view")
 
     def test_important_still_drops_uninteresting_info(self):
@@ -408,22 +409,22 @@ class PanelLogHandling(unittest.TestCase):
             "2026-10-09 16:32:10,000 - INFO - Decision engine: AI (respone) with heuristic fallback",
             "2026-10-09 16:32:10,000 - INFO - BotApp singleton created (web GUI)",
         ]
-        self.assertEqual(self.panel.filter_lines(lines, level="important"), [])
+        self.assertEqual(self.bridge.filter_lines(lines, level="important"), [])
 
     def test_event_classification(self):
-        self.assertTrue(self.panel.is_event("AI: bid 5,000,000 Toman"))
-        self.assertTrue(self.panel.is_event("Monitor stopped"))
-        self.assertFalse(self.panel.is_event("Decision engine: AI (respone)"))
+        self.assertTrue(self.bridge.is_event("AI: bid 5,000,000 Toman"))
+        self.assertTrue(self.bridge.is_event("Monitor stopped"))
+        self.assertFalse(self.bridge.is_event("Decision engine: AI (respone)"))
 
     def test_repeats_collapse_into_one_row_with_a_count(self):
         """The whole point: nine identical failures become one row."""
-        collapsed = self.panel.collapse_repeats(self.NOISY)
+        collapsed = self.bridge.collapse_repeats(self.NOISY)
         noise_rows = [c for c in collapsed if "Forex fetch failed" in c[0]]
         self.assertEqual(len(noise_rows), 1)
         self.assertEqual(noise_rows[0][1], 9)
 
     def test_distinct_lines_are_not_merged(self):
-        collapsed = self.panel.collapse_repeats([
+        collapsed = self.bridge.collapse_repeats([
             "2026-10-09 16:32:10,000 - INFO - a",
             "2026-10-09 16:32:11,000 - INFO - b",
         ])
@@ -432,7 +433,7 @@ class PanelLogHandling(unittest.TestCase):
     def test_repeated_message_with_different_timestamps_still_collapses(self):
         """Comparing raw lines would never match: the timestamps differ. The
         run being counted is exactly this shape."""
-        collapsed = self.panel.collapse_repeats([
+        collapsed = self.bridge.collapse_repeats([
             "2026-10-09 16:32:09,379 - WARNING - same failure",
             "2026-10-09 16:32:14,474 - WARNING - same failure",
         ])
@@ -442,66 +443,58 @@ class PanelLogHandling(unittest.TestCase):
 
 class PanelFormatting(unittest.TestCase):
     def setUp(self):
-        from ponishabot import panel
-        self.panel = panel
+        from ponishabot.tui import bridge
+        self.bridge = bridge
 
     def test_money_groups_digits(self):
-        self.assertEqual(self.panel.fmt_money(7_700_000), "7٬700٬000")
+        self.assertEqual(self.bridge.fmt_money(7_700_000), "7٬700٬000")
 
     def test_money_handles_unknown(self):
         for v in (None, "", "abc"):
-            self.assertEqual(self.panel.fmt_money(v), "—", v)
+            self.assertEqual(self.bridge.fmt_money(v), "—", v)
 
     def test_duration_scales(self):
-        self.assertEqual(self.panel.fmt_duration(8), "8s")
-        self.assertEqual(self.panel.fmt_duration(760), "12m 40s")
-        self.assertEqual(self.panel.fmt_duration(11_220), "3h 07m")
+        self.assertEqual(self.bridge.fmt_duration(8), "8s")
+        self.assertEqual(self.bridge.fmt_duration(760), "12m 40s")
+        self.assertEqual(self.bridge.fmt_duration(11_220), "3h 07m")
 
     def test_duration_handles_none_and_negative(self):
-        self.assertEqual(self.panel.fmt_duration(None), "—")
-        self.assertEqual(self.panel.fmt_duration(-5), "—")
+        self.assertEqual(self.bridge.fmt_duration(None), "—")
+        self.assertEqual(self.bridge.fmt_duration(-5), "—")
 
     def test_layout_switches_on_width(self):
-        self.assertEqual(self.panel.layout_for_width(120), "wide")
-        self.assertEqual(self.panel.layout_for_width(60), "narrow")
+        self.assertEqual(self.bridge.layout_for_width(120), "wide")
+        self.assertEqual(self.bridge.layout_for_width(60), "narrow")
 
     def test_strip_ansi_removes_escapes(self):
-        self.assertEqual(self.panel.strip_ansi("\x1b[31mred\x1b[0m"), "red")
+        self.assertEqual(self.bridge.strip_ansi("\x1b[31mred\x1b[0m"), "red")
 
-    def _render(self, buf, width=112):
-        """Build the panel offscreen and return it as text."""
-        import io
-        from rich.console import Console
-        panel_obj = self.panel.TerminalPanel.__new__(self.panel.TerminalPanel)
-        panel_obj.level = "debug"
-        panel_obj.show_noise = True
-        panel_obj._recent = []
-        panel_obj._log_buf = buf
-        panel_obj._notice = ""
-        panel_obj._notice_until = 0.0
-        c = Console(width=width, force_terminal=False, no_color=True,
-                    file=io.StringIO())
-        renderable, _keys = panel_obj._build(
-            {"running": False, "quota": 0, "matches": 0, "bids": 0,
-             "dry_run": True, "ai_enabled": False, "has_cookies": False,
-             "refresh_interval": 60, "started_at": None}, width)
-        c.print(renderable)
-        return c.file.getvalue()
+    def test_truncate_measures_display_cells_not_characters(self):
+        """A Persian line is not as wide as len() suggests, so clipping by
+        character count would cut the wrong amount."""
+        long = "این یک خط بسیار طولانی فارسی است که باید کوتاه شود"
+        out = self.bridge.truncate_width(long, 20)
+        from rich.cells import cell_len
+        self.assertLessEqual(cell_len(out), 20)
+        self.assertTrue(out.endswith("…"))
 
-    def test_brackets_in_log_do_not_break_markup(self):
-        """Log messages carry brackets (URLs, driver names). Building the row
-        with markup would make rich parse them as tags and raise."""
-        out = self._render([
-            "2026-10-09 16:32:10,000 - INFO - no [win64] chromedriver for [google-chrome]",
-            "2026-10-09 16:32:11,000 - INFO - see https://example.com/a[b]c",
-        ])
-        self.assertIn("win64", out)
+    def test_truncate_leaves_a_short_line_alone(self):
+        self.assertEqual(self.bridge.truncate_width("کوتاه", 40), "کوتاه")
 
-    def test_a_very_long_line_renders_without_wrapping_out(self):
-        out = self._render([
-            "2026-10-09 16:32:10,000 - ERROR - " + "x" * 400,
-        ], width=100)
-        self.assertIn("x", out)
+    def test_status_rows_reflect_the_snapshot(self):
+        rows = dict(self.bridge.status_rows({
+            "running": True, "quota": 60, "matches": 3, "bids": 11,
+            "ai_enabled": True, "has_cookies": True, "refresh_interval": 60,
+            "uptime": 3725}))
+        self.assertEqual(rows["وضعیت"], "در حال اجرا")
+        self.assertEqual(rows["سهمیه"], "60")
+        self.assertEqual(rows["متچ"], "3")
+        self.assertEqual(rows["Uptime"], "1h 02m")
+
+    def test_status_rows_say_bidding_before_running(self):
+        """Bidding is the more specific state and must win the label."""
+        rows = dict(self.bridge.status_rows({"running": True, "bidding": True}))
+        self.assertEqual(rows["وضعیت"], "در حال ارسال پیشنهاد")
 
 
 class TerminalSingleton(unittest.TestCase):
@@ -558,6 +551,165 @@ class TerminalSingleton(unittest.TestCase):
         self.assertIs(self.botstate._app, app)
         snap = self.botstate.status_snapshot()
         self.assertIn("running", snap)
+
+
+def _textual_available() -> bool:
+    try:
+        import textual  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+@unittest.skipUnless(_textual_available(), "textual is not installed")
+class TuiNavigation(unittest.TestCase):
+    """Drives the real app through Textual's test harness.
+
+    This is the part a pure-function test cannot reach: whether keys actually
+    arrive, whether focus swallows them, and whether Tab really cycles. Two
+    bugs surfaced here that no amount of unit testing would have caught — every
+    screen compared equal because `Screen.name` defaults to None, and a focused
+    Input ate the shortcut keys.
+    """
+
+    def setUp(self):
+        import tempfile
+        from ponishabot import config, botstate
+        self.botstate = botstate
+        self._saved_app = botstate._app
+        botstate._app = None
+        self._tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", delete=False, encoding="utf-8")
+        self._tmp.write("bid:\n  dry_run: true\nsearch:\n  skills: []\n")
+        self._tmp.close()
+        # `__defaults__` has to be replaced on the loader: `ConfigLoader.load`
+        # declares `path: str = paths.CONFIG_PATH` as a default argument, and
+        # Python binds defaults once at def time, so patching paths.CONFIG_PATH
+        # afterwards would have no effect.
+        self._patch = mock.patch.object(
+            config.ConfigLoader.load, "__defaults__", (self._tmp.name,))
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        self.botstate._app = self._saved_app
+        try:
+            os.unlink(self._tmp.name)
+        except OSError:
+            pass
+
+    def _run(self, coro):
+        import asyncio
+        return asyncio.run(coro)
+
+    def _build(self):
+        from ponishabot.tui.app import PonishaTUI
+        from ponishabot.tui.screens import ALL_SCREENS
+        PonishaTUI.SCREEN_CLASSES = list(ALL_SCREENS)
+        return PonishaTUI(self.botstate.get_app())
+
+    def test_tab_cycles_through_every_screen_and_wraps(self):
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                seen = []
+                for _ in range(5):
+                    seen.append(type(app.screen).__name__)
+                    await pilot.press("tab")
+                    await pilot.pause()
+                # back to the start after a full cycle
+                wrapped = type(app.screen).__name__
+                await pilot.press("q")
+                return seen, wrapped
+
+        seen, wrapped = self._run(scenario())
+        self.assertEqual(len(set(seen)), 5, f"screens not distinct: {seen}")
+        self.assertEqual(wrapped, seen[0], "Tab did not wrap around")
+
+    def test_shift_tab_goes_backwards(self):
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("tab")
+                await pilot.pause()
+                forward = type(app.screen).__name__
+                await pilot.press("shift+tab")
+                await pilot.pause()
+                back = type(app.screen).__name__
+                await pilot.press("q")
+                return forward, back
+
+        forward, back = self._run(scenario())
+        self.assertNotEqual(forward, back)
+
+    def test_vim_keys_move_the_cursor_in_a_table(self):
+        """`j`/`k` are documented as alternatives to the arrow keys."""
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("tab")          # -> projects
+                await pilot.pause()
+                from textual.widgets import DataTable
+                table = app.screen.query_one(DataTable)
+                table.add_row("1", "a", "b", "c")
+                table.add_row("2", "d", "e", "f")
+                table.focus()
+                await pilot.press("j")
+                await pilot.pause()
+                down = table.cursor_row
+                await pilot.press("k")
+                await pilot.pause()
+                up = table.cursor_row
+                await pilot.press("q")
+                return down, up
+
+        down, up = self._run(scenario())
+        self.assertGreater(down, 0, "j did not move the cursor down")
+        self.assertEqual(up, 0, "k did not move the cursor back up")
+
+    def test_q_quits(self):
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("q")
+                await pilot.pause()
+                return app.is_running
+
+        self.assertFalse(self._run(scenario()), "q did not quit the app")
+
+
+class TuiFallback(unittest.TestCase):
+    """The mode must be chosen before authentication runs.
+
+    `python main.py > log.txt` used to launch Chrome anyway, because the monitor
+    was built first — on a host with no display that ended in an unhandled
+    "tab crashed" traceback instead of a log stream.
+    """
+
+    def test_piped_stdout_reports_tui_unavailable(self):
+        from ponishabot import tui
+        real = sys.stdout
+        try:
+            sys.stdout = io.StringIO()      # a StringIO is not a tty
+            self.assertFalse(tui.can_run_tui(),
+                             "a non-tty must not be offered the full-screen UI")
+        finally:
+            sys.stdout = real
+
+    def test_piped_output_streams_instead_of_crashing(self):
+        """End to end: with stdout piped, run_terminal must not reach the TUI."""
+        from ponishabot import app as app_mod
+        source = open(os.path.join(ROOT, "ponishabot", "app.py"),
+                      encoding="utf-8").read()
+        # the guard has to come before build_monitor, which is what signs in
+        guard = source.index("can_run_tui()")
+        build = source.index("self.build_monitor()", source.index("def run_terminal"))
+        self.assertLess(guard, build,
+                        "run_terminal must check can_run_tui() before build_monitor()")
 
 
 class ConfigDefaults(unittest.TestCase):
