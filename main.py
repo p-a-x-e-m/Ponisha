@@ -9,6 +9,7 @@ The desktop CustomTkinter GUI was replaced by the Django dashboard.
 
 import argparse
 import logging
+import os
 import sys
 
 # Ensure UTF-8 output (especially when stdout is piped/redirected)
@@ -68,6 +69,15 @@ def main():
                         default="important",
                         help="how much the panel shows (default: important)")
     args = parser.parse_args()
+
+    # Tell the config loader to hold its summary banner before the app exists.
+    # The loader runs inside botstate.get_app() below, and that banner is a bare
+    # print() to stdout — inside the TUI it lands mid-screen and pushes the
+    # rendered interface up. Set only when the TUI is actually going to run, so
+    # --plain and the web dashboard keep the summary they have always shown.
+    from ponishabot.tui import can_run_tui
+    if not args.plain and can_run_tui():
+        os.environ["PONISHABOT_QUIET_CONFIG"] = "1"
 
     # Use the process-wide singleton rather than a fresh BotApp. A second
     # instance would carry its own Selenium driver and its own monitor while

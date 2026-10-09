@@ -149,32 +149,48 @@ class Config:
         }
 
 
+def _printer():
+    """Return a print() that survives a console which cannot encode the text."""
+    def _p(msg: str) -> None:
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            print(msg.encode("utf-8", "replace").decode("ascii", "replace"))
+    return _p
+
+
 class ConfigLoader:
     @staticmethod
-    def load(path: str = paths.CONFIG_PATH) -> Config:
+    def load(path: str = paths.CONFIG_PATH, quiet: bool = None) -> Config:
+        """Read config.yaml, optionally printing a summary of what was loaded.
+
+        The summary is suppressed when `quiet` is true, or when the
+        PONISHABOT_QUIET_CONFIG environment variable is set. The TUI sets that
+        variable before the app is built: the banner is a bare print() to
+        stdout, so inside the rendered screen it appears mid-interface and
+        pushes the layout up. `--plain` and the web dashboard keep it.
+        """
+        if quiet is None:
+            quiet = bool(os.environ.get("PONISHABOT_QUIET_CONFIG"))
         if not os.path.exists(path):
             raise FileNotFoundError(f"Config file not found: {path}")
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         cfg = Config(data)
-        # Print values for a sanity check — encode-safe on cp1252 consoles
-        # (Persian skill names would otherwise crash Windows terminals / Django).
-        line = "-" * 40
-        def _p(msg: str) -> None:
-            try:
-                print(msg)
-            except UnicodeEncodeError:
-                print(msg.encode("utf-8", "replace").decode("ascii", "replace"))
-        _p(line)
-        _p("Settings loaded:")
-        _p(f"  telegram enabled: {cfg.has_telegram()}")
-        _p(f"  search skills: {cfg.search_skills}")
-        _p(f"  poll interval: {cfg.refresh_interval}s")
-        _p(f"  budget: {cfg.budget_min}-{cfg.budget_max} | min_skill_match: {cfg.min_skill_match}")
-        _p(f"  DRY_RUN: {cfg.dry_run} | headless: {cfg.headless}")
-        _p(f"  AI: {'ON' if cfg.ai_enabled else 'off'} "
-           f"({cfg.ai_model or 'no model'})")
-        _p(line)
+        if not quiet:
+            # Encode-safe on cp1252 consoles (Persian skill names would
+            # otherwise crash Windows terminals / Django).
+            _p = _printer()
+            _p("-" * 40)
+            _p("Settings loaded:")
+            _p(f"  telegram enabled: {cfg.has_telegram()}")
+            _p(f"  search skills: {cfg.search_skills}")
+            _p(f"  poll interval: {cfg.refresh_interval}s")
+            _p(f"  budget: {cfg.budget_min}-{cfg.budget_max} | min_skill_match: {cfg.min_skill_match}")
+            _p(f"  DRY_RUN: {cfg.dry_run} | headless: {cfg.headless}")
+            _p(f"  AI: {'ON' if cfg.ai_enabled else 'off'} "
+               f"({cfg.ai_model or 'no model'})")
+            _p("-" * 40)
         return cfg
 
     @staticmethod

@@ -621,10 +621,12 @@ class LoginScreen(BaseScreen):
                                   result.get("error", "invalid code"), "err")
 
     def action_browser_login(self) -> None:
-        """o / button: the Chrome path, for when OTP is not set up."""
-        if self.bot.monitor is None:
-            self._note("start the bot from the Dashboard first", "err")
-            return
+        """o / button: the Chrome path, for when OTP is not set up.
+
+        Nothing to check first — `open_login_browser` prepares the bot on its
+        own worker thread, which is also what keeps Chrome off the thread the
+        TUI renders on.
+        """
         threading.Thread(target=self.bot.open_login_browser,
                          daemon=True).start()
         self._note("Chrome is opening — sign in, then close the window")

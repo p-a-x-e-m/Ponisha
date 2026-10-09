@@ -165,6 +165,14 @@ python manage.py bot_login          # باز کردن کروم برای لاگی
  └──────────────────────────────────────────────┘
 ```
 
+> **هیچ ورود خودکاری در کار نیست.** `main.py` نه کروم باز می‌کند و نه منتظر
+> Enter می‌ماند — قبلاً هر دو را می‌کرد و نتیجه‌اش این بود که به‌محض اجرا یک
+> پرامپت ورود می‌آمد و خودِ رابط **هرگز ظاهر نمی‌شد**. ورود از صفحهٔ **Login**
+> انجام می‌شود: یا کد پیامک (بدون مرورگر) یا `o` برای کروم.
+>
+> اگر بدون ورود `--plain` را اجرا کنی، پیام راهنما می‌گیری و خارج می‌شود —
+> نه اینکه پنجرهٔ کرومی باز شود که روی این ماشین با «tab crashed» می‌افتد.
+
 > **رابط انگلیسی است.** داشبورد وب فارسی است چون کسی آن را در مرورگر
 > می‌خواند؛ این را در grid ترمینال می‌خوانی، جایی که فارسی واقعاً شکننده
 > است — حروف به هم می‌چسبند و عرض رشته با طولش یکی نیست، پس ستون‌ها از
@@ -865,6 +873,14 @@ each step.
  │  arrows move · Enter opens · or the number   │
  └──────────────────────────────────────────────┘
 ```
+
+> **Nothing signs in on its own.** `main.py` neither opens Chrome nor waits on
+> Enter — it used to do both, and the result was that a login prompt appeared
+> first and the interface **never showed at all**. Signing in happens from the
+> **Login** screen: either an SMS code (no browser needed) or `o` for Chrome.
+>
+> Running `--plain` without a session prints how to sign in and exits, rather
+> than opening a Chrome window that dies with "tab crashed" on this machine.
 
 > **The interface is English.** The web dashboard is Persian because it is read
 > in a browser; this is read inside a terminal grid, where Persian is genuinely

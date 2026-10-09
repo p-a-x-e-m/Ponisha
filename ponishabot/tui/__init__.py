@@ -34,13 +34,16 @@ def can_run_tui() -> bool:
 
 
 def run_tui(app, level: str = "important") -> int:
-    """Run the TUI. Caller must have checked `can_run_tui()` first."""
+    """Run the TUI. Caller must have checked `can_run_tui()` first.
+
+    Authentication is deliberately not done here. `build_monitor()` signs in,
+    and with no stored session that opens Chrome and blocks on `input()` from
+    the main thread — which is the thread the TUI needs to render on, so the
+    interface never appeared and the first thing a new user saw was a login
+    prompt in a terminal. Signing in happens from the Login screen instead.
+    """
     if not can_run_tui():
         return run_plain(app)
-
-    if not app.build_monitor():
-        logger.error("could not prepare the bot (authentication failed)")
-        return 1
 
     from ponishabot.tui.app import PonishaTUI
     from ponishabot.tui.screens import ALL_SCREENS
@@ -63,27 +66,35 @@ def run_tui(app, level: str = "important") -> int:
 def run_plain(app) -> int:
     """Stream the log, as `main.py` did before the TUI existed.
 
-    The monitor is only started once the bot is ready. `app.start()` runs the
-    whole auth chain, and on a host with no stored session that opens Chrome —
-    which then dies with "tab crashed" on a machine that cannot show a window,
-    leaving the process sitting on a dead driver instead of logging in the
-    terminal. Preparing the monitor first surfaces that as a clear message.
+    Authentication is deliberately not done here either. `build_monitor()` signs
+    in, and with no stored session that opens Chrome and blocks on `input()` —
+    the opposite of streaming the log, and on a host with no display it ends in
+    a "tab crashed". A run that cannot sign in says so and exits, rather than
+    opening a window the operator did not ask for.
     """
     if not app.is_running():
-        # Auth can raise rather than return False: on a headless host the
-        # browser itself fails ("tab crashed") and `manual_login` lets that
-        # exception through. Catching it here turns an unhandled traceback into
-        # a message naming the way out, without changing the auth flow the web
-        # dashboard depends on.
+        # A stored cookie is not proof of a live session — ponisha may have
+        # invalidated it, and on this machine that is exactly the case. Without
+        # the probe the monitor gets built, Chrome opens, and the run blocks on
+        # input() in a mode documented as streaming the log.
+        try:
+            valid = app.has_valid_session()
+        except Exception as e:
+            logger.debug(f"session probe failed: {type(e).__name__}: {e}")
+            valid = False
+        if not valid:
+            logger.error("not authenticated — open the dashboard (`python "
+                         "manage.py bot`) and sign in from the Login screen, or "
+                         "run `python manage.py bot_login` once on a machine "
+                         "with a display")
+            return 1
         try:
             ready = app.build_monitor()
         except Exception as e:
             logger.error(f"could not prepare the bot: {type(e).__name__}: {e}")
             ready = False
         if not ready:
-            logger.error("not authenticated — run `python manage.py bot_login` "
-                         "once on a machine with a display, or use the OTP login "
-                         "in the web UI")
+            logger.error("could not prepare the bot")
             return 1
         app.start_monitor_thread()
     try:

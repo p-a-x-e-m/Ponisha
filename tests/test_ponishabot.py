@@ -515,7 +515,7 @@ class TerminalSingleton(unittest.TestCase):
 
     def setUp(self):
         import tempfile
-        from ponishabot import botstate, config
+        from ponishabot import botstate
         self.botstate = botstate
         self._saved_app = botstate._app
         botstate._app = None                      # force a fresh build
@@ -523,12 +523,7 @@ class TerminalSingleton(unittest.TestCase):
             "w", suffix=".yaml", delete=False, encoding="utf-8")
         self._tmp.write("bid:\n  dry_run: true\nsearch:\n  skills: []\n")
         self._tmp.close()
-        # Patching `paths.CONFIG_PATH` would not work: `ConfigLoader.load` takes
-        # `path: str = paths.CONFIG_PATH` as a default argument, and Python
-        # evaluates defaults once at def time. The bound value has to be
-        # replaced on the loader that captured it.
-        self._patch = mock.patch.object(
-            config.ConfigLoader.load, "__defaults__", (self._tmp.name,))
+        self._patch = _patch_config_path(self._tmp.name)
         self._patch.start()
 
     def tearDown(self):
@@ -556,6 +551,25 @@ class TerminalSingleton(unittest.TestCase):
         self.assertIs(self.botstate._app, app)
         snap = self.botstate.status_snapshot()
         self.assertIn("running", snap)
+
+
+def _patch_config_path(path: str):
+    """Point `ConfigLoader.load` at a temp file for one test.
+
+    Replacing `paths.CONFIG_PATH` does not work: `load` declares
+    `path: str = paths.CONFIG_PATH` as a default argument and Python binds
+    defaults once at def time. Replacing `__defaults__` worked until a second
+    parameter was added, at which point the tuple had to grow too — so the
+    wrapper takes *args/**kwargs and cannot go stale that way.
+    """
+    from ponishabot import config
+    real = config.ConfigLoader.load
+
+    def load(*args, **kwargs):
+        kwargs.setdefault("path", path)
+        return real(*args, **kwargs)
+
+    return mock.patch.object(config.ConfigLoader, "load", staticmethod(load))
 
 
 def _textual_available() -> bool:
@@ -587,12 +601,7 @@ class TuiNavigation(unittest.TestCase):
             "w", suffix=".yaml", delete=False, encoding="utf-8")
         self._tmp.write("bid:\n  dry_run: true\nsearch:\n  skills: []\n")
         self._tmp.close()
-        # `__defaults__` has to be replaced on the loader: `ConfigLoader.load`
-        # declares `path: str = paths.CONFIG_PATH` as a default argument, and
-        # Python binds defaults once at def time, so patching paths.CONFIG_PATH
-        # afterwards would have no effect.
-        self._patch = mock.patch.object(
-            config.ConfigLoader.load, "__defaults__", (self._tmp.name,))
+        self._patch = _patch_config_path(self._tmp.name)
         self._patch.start()
 
     def tearDown(self):
@@ -829,15 +838,126 @@ class TuiFallback(unittest.TestCase):
             sys.stdout = real
 
     def test_piped_output_streams_instead_of_crashing(self):
-        """End to end: with stdout piped, run_terminal must not reach the TUI."""
-        from ponishabot import app as app_mod
+        """With stdout piped, run_terminal must not reach the TUI."""
         source = open(os.path.join(ROOT, "ponishabot", "app.py"),
                       encoding="utf-8").read()
-        # the guard has to come before build_monitor, which is what signs in
-        guard = source.index("can_run_tui()")
-        build = source.index("self.build_monitor()", source.index("def run_terminal"))
-        self.assertLess(guard, build,
-                        "run_terminal must check can_run_tui() before build_monitor()")
+        body = source[source.index("def run_terminal"):]
+        body = body[:body.index("def ", body.index("def run_terminal") + 10)] \
+            if "def " in body[body.index("def run_terminal") + 10:] else body
+        self.assertIn("can_run_tui()", body,
+                      "run_terminal must decide the mode before anything else")
+
+    def test_run_terminal_does_not_authenticate(self):
+        """No sign-in from run_terminal.
+
+        It used to call build_monitor(), which opens Chrome and blocks on
+        input() from the main thread — the thread the TUI renders on. Starting
+        `main.py` therefore showed a login prompt and the interface never
+        appeared. Signing in belongs to the Login screen.
+        """
+        import ast
+        source = open(os.path.join(ROOT, "ponishabot", "app.py"),
+                      encoding="utf-8").read()
+        tree = ast.parse(source)
+        func = next(n for n in ast.walk(tree)
+                    if isinstance(n, ast.FunctionDef) and n.name == "run_terminal")
+        # Walk the body, not the source text: the docstring names
+        # build_monitor() to explain why it is gone, and a text scan flags the
+        # explanation as the defect.
+        called = set()
+        for node in ast.walk(func):
+            if isinstance(node, ast.Call):
+                f = node.func
+                called.add(getattr(f, "attr", None) or getattr(f, "id", None))
+        for forbidden in ("build_monitor", "ensure_auth", "manual_login"):
+            self.assertNotIn(forbidden, called,
+                             f"run_terminal must not call {forbidden}")
+
+    def test_stored_cookie_is_not_treated_as_a_live_session(self):
+        """`has_cookies` only says a cookie exists.
+
+        This machine holds a pss-at cookie ponisha has already invalidated, so
+        trusting that flag meant the plain path built the monitor anyway —
+        which opens Chrome and blocks on input() in a mode documented as
+        streaming the log. `has_valid_session` probes instead.
+        """
+        from ponishabot.app import BotApp
+        fake_auth = mock.Mock()
+        fake_auth.get_cookies.return_value = [{"name": "pss-at", "value": "x"}]
+        fake_auth._probe_session.return_value = False     # stored but revoked
+        fake_auth._token_cookies.return_value = []
+        app = BotApp.__new__(BotApp)
+        app.auth = fake_auth
+
+        self.assertEqual(app.has_valid_session(), False,
+                         "an invalidated cookie must not read as a session")
+        fake_auth._probe_session.assert_called_once()
+
+    def test_valid_cookie_reads_as_a_session(self):
+        from ponishabot.app import BotApp
+        fake_auth = mock.Mock()
+        fake_auth.get_cookies.return_value = [{"name": "pss-at", "value": "x"}]
+        fake_auth._probe_session.return_value = True
+        app = BotApp.__new__(BotApp)
+        app.auth = fake_auth
+        self.assertTrue(app.has_valid_session())
+
+    def test_otp_token_alone_reads_as_a_session(self):
+        """An OTP login stores a bearer token, not cookies; the session can
+        still be rebuilt from it without a browser."""
+        from ponishabot.app import BotApp
+        fake_auth = mock.Mock()
+        fake_auth.get_cookies.return_value = []
+        fake_auth._token_cookies.return_value = [{"name": "pss-at", "value": "y"}]
+        app = BotApp.__new__(BotApp)
+        app.auth = fake_auth
+        self.assertTrue(app.has_valid_session())
+
+
+class ConfigBanner(unittest.TestCase):
+    """The load summary is a bare print() to stdout.
+
+    Inside the TUI that lands mid-screen and pushes the rendered interface up,
+    so the terminal entry sets PONISHABOT_QUIET_CONFIG before the app is built.
+    """
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", delete=False, encoding="utf-8")
+        self._tmp.write("bid:\n  dry_run: true\n")
+        self._tmp.close()
+        self._saved = os.environ.pop("PONISHABOT_QUIET_CONFIG", None)
+
+    def tearDown(self):
+        if self._saved is not None:
+            os.environ["PONISHABOT_QUIET_CONFIG"] = self._saved
+        else:
+            os.environ.pop("PONISHABOT_QUIET_CONFIG", None)
+        try:
+            os.unlink(self._tmp.name)
+        except OSError:
+            pass
+
+    def _capture(self, **kwargs):
+        import contextlib
+        import io as _io
+        from ponishabot.config import ConfigLoader
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ConfigLoader.load(self._tmp.name, **kwargs)
+        return buf.getvalue()
+
+    def test_banner_is_printed_by_default(self):
+        self.assertIn("Settings loaded", self._capture())
+
+    def test_explicit_quiet_suppresses_it(self):
+        self.assertNotIn("Settings loaded", self._capture(quiet=True))
+
+    def test_env_var_suppresses_it(self):
+        """How main.py asks for quiet without importing the config module."""
+        os.environ["PONISHABOT_QUIET_CONFIG"] = "1"
+        self.assertNotIn("Settings loaded", self._capture())
 
 
 class ConfigDefaults(unittest.TestCase):

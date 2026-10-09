@@ -68,6 +68,23 @@ class BotApp:
         """If no cookie is stored, open Chrome for manual login."""
         return self.auth.auth(interactive=interactive)
 
+    def has_valid_session(self) -> bool:
+        """Whether a usable session exists, without opening a browser.
+
+        `status_snapshot()["has_cookies"]` is not enough: this machine has a
+        stored cookie ponisha has since invalidated, so that check reports True
+        and the caller then builds the monitor — which opens Chrome and blocks
+        on `input()` in a plain run. Probing the API is what actually answers
+        the question; the auth layer already does exactly this before deciding
+        to ask for a manual login.
+        """
+        cookies = self.auth.get_cookies() or []
+        if cookies and self.auth._probe_session(cookies):
+            return True
+        # An OTP login stores a bearer token rather than cookies; the auth layer
+        # can still synthesise a working session from it without a browser.
+        return bool(self.auth._token_cookies())
+
     # ─── Status ───
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -255,9 +272,21 @@ class BotApp:
 
     def open_login_browser(self) -> None:
         """Open the browser to the login page and wait for manual login.
-        Emits a 'login_done' / 'login_error' event when finished."""
+
+        Emits a 'login_done' / 'login_error' event when finished.
+
+        The monitor is built here if it is not already. It used to be built in
+        `run_terminal` before the TUI started, which signed in first and
+        blocked on `input()` from the main thread, so the interface never
+        appeared. Doing it now keeps that work on this worker thread instead.
+        """
         def worker():
             try:
+                if self.monitor is None and not self.build_monitor():
+                    logger.error("Login browser: could not prepare the bot")
+                    self.event_queue and self.event_queue.put(
+                        {"type": "login_error", "error": "could not prepare the bot"})
+                    return
                 with self._lock:
                     self.auth.manual_login(interactive=False)
                     self.auth.save_cookies(
@@ -579,18 +608,20 @@ class BotApp:
         return self._thread
 
     def run_terminal(self, plain: bool = False, level: str = "important") -> None:
-        """Terminal entry: build the monitor, then hand over to the TUI."""
+        """Terminal entry: hand over to the TUI, signing in only if asked.
+
+        No authentication happens here. `build_monitor()` signs in, and with no
+        stored session that means `manual_login()` — which opens Chrome and
+        blocks on `input()` from the main thread. Starting `main.py` therefore
+        showed a login prompt first and the TUI never appeared at all. The Login
+        screen exists for exactly that step, so it is left to the operator.
+        """
         from ponishabot.tui import can_run_tui, run_plain, run_tui
 
-        # Decide the mode BEFORE touching authentication. `build_monitor()`
-        # signs in and can launch Chrome, and doing that first meant a piped or
-        # redirected run still opened a browser — which then crashed on a host
-        # with no display, instead of simply streaming the log as asked.
+        # Decide the mode BEFORE touching authentication: a piped run must not
+        # open a browser it has no way to show.
         if plain or not can_run_tui():
             run_plain(self)
-            return
-
-        if not self.build_monitor():
             return
 
         def handle_interrupt(signum, frame):
@@ -604,9 +635,6 @@ class BotApp:
             signal.signal(signal.SIGINT, handle_interrupt)
         except (ValueError, AttributeError):
             pass
-
-        if not self.is_running():
-            self.start_monitor_thread()
 
         try:
             run_tui(self, level=level)
