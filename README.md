@@ -181,28 +181,41 @@ python manage.py bot_login          # باز کردن کروم برای لاگی
 
 #### صفحه‌ها
 
-`Tab` و `Shift+Tab` بین این شش صفحه می‌چرخند:
-
 | صفحه | چه‌کار می‌کند |
 |---|---|
 | **Menu** | انتخاب صفحه با `1`..`5` یا `↑↓` + `Enter` |
 | **Dashboard** | وضعیت زنده، آخرین پیشنهادها، شروع/توقف |
 | **Projects** | جدول پروژه‌های اسکن‌شده؛ `Enter` جزئیات تصمیم، `/` جست‌وجو، `b` ارسال پیشنهاد |
-| **Settings** | همهٔ تنظیمات؛ `Tab` بین فیلدها، `Ctrl+S` ذخیره، `Esc` لغو |
+| **Settings** | همهٔ تنظیمات در **۷ بخش**؛ `Tab` بین بخش‌ها، `Ctrl+S` ذخیره، `Esc` لغو |
 | **Login** | شمارهٔ موبایل → کد پیامک، یا `o` برای ورود با مرورگر |
 | **Log** | لاگ زنده؛ `f` سطح، `n` نویز، `c` پاک‌کردن |
+
+**صفحهٔ Settings هفت بخش دارد** — همان بخش‌های داشبورد وب: Controls · Telegram ·
+Search & budget · Profile · AI · Pricing · Forex & clamp. `Tab` بین بخش‌ها می‌چرخد و
+هر بخش فقط فیلدهای خودش را نشان می‌دهد، پس دیگر لازم نیست ۳۸ بار `Tab` بزنی تا به
+فیلد آخر برسی.
 
 #### کلیدها
 
 | کلید | کار |
 |---|---|
 | `1`..`5` | (در منو) رفتن مستقیم به صفحه |
-| `Tab` / `Shift+Tab` | صفحهٔ بعد / قبل |
-| `↑` `↓` یا `k` `j` | حرکت در فهرست‌ها |
+| `ctrl+→` / `ctrl+←` | صفحهٔ بعد / قبل — **همه‌جا کار می‌کند** |
+| `Tab` / `Shift+Tab` | در Settings: بخش بعد/قبل · بقیه: صفحهٔ بعد/قبل |
+| `↑` `↓` یا `k` `j` | حرکت در فهرست‌ها و بین فیلدها |
 | `Enter` | تأیید / جزئیات / ویرایش |
 | `Esc` | برگشت به منو / لغو ویرایش |
 | `m` | برگشت به منو از هر جا |
 | `q` | خروج (درایور کروم بسته می‌شود) |
+
+> **چرا `ctrl+→` و نه یک کلید ساده‌تر؟** یک کلید **چاپ‌شدنی** هرگز به برنامه
+> نمی‌رسد وقتی فیلد متنی فوکوس دارد — خودِ `Input` آن را می‌بلعد و برنامه حتی
+> رویداد را نمی‌بیند. با رندر واقعی آزموده شد: روی صفحهٔ ورود که فوکوس در فیلد
+> شماره است، `]` هیچ‌کاری نمی‌کرد و صفحه بن‌بست می‌شد. `ctrl+→` چاپ‌شدنی نیست،
+> پس همیشه می‌رسد.
+
+> **ماوس غیرفعال است.** کلیک، چرخ ماوس، و hover هیچ‌کاری نمی‌کنند —
+> رابط فقط کیبوردی است.
 
 کلیدهای داخل هر صفحه:
 
@@ -891,28 +904,41 @@ each step.
 
 #### Screens
 
-`Tab` and `Shift+Tab` cycle through these six:
-
 | Screen | What it does |
 |---|---|
 | **Menu** | pick a screen with `1`..`5`, or `↑↓` + `Enter` |
 | **Dashboard** | live status, recent proposals, start/stop |
 | **Projects** | table of scanned projects; `Enter` shows the decision, `/` searches, `b` bids |
-| **Settings** | every setting; `Tab` between fields, `Ctrl+S` saves, `Esc` reverts |
+| **Settings** | every setting in **7 sections**; `Tab` between sections, `Ctrl+S` saves, `Esc` reverts |
 | **Login** | mobile → SMS code, or `o` for browser login |
 | **Log** | live log; `f` level, `n` noise, `c` clear |
+
+**Settings has seven sections** — the same ones the web dashboard uses: Controls,
+Telegram, Search & budget, Profile, AI, Pricing, Forex & clamp. `Tab` moves
+between them, and each shows only its own fields, so reaching the last setting no
+longer means 38 presses of Tab.
 
 #### Keys
 
 | Key | Action |
 |---|---|
 | `1`..`5` | (on the menu) jump straight to a screen |
-| `Tab` / `Shift+Tab` | next / previous screen |
-| `↑` `↓` or `k` `j` | move through lists |
+| `ctrl+→` / `ctrl+←` | next / previous screen — **works everywhere** |
+| `Tab` / `Shift+Tab` | in Settings: next/previous section · elsewhere: next/previous screen |
+| `↑` `↓` or `k` `j` | move through lists and between fields |
 | `Enter` | confirm / details / edit |
 | `Esc` | back to the menu / cancel an edit |
 | `m` | return to the menu from anywhere |
 | `q` | quit (closes the Chrome driver) |
+
+> **Why `ctrl+→` rather than something simpler?** A **printable** key never
+> reaches the app while a text field has focus — `Input` consumes it and the app
+> does not see the event at all. Measured rather than assumed: on the login
+> screen, with focus in the mobile field, `]` did nothing and that screen became
+> a dead end. `ctrl+→` is not printable, so it always arrives.
+
+> **The mouse is off.** Clicks, wheel scrolling and hover do nothing — this
+> interface is keyboard-only.
 
 Per screen:
 

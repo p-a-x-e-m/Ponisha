@@ -125,8 +125,6 @@ class PonishaTUI(App):
         color: {bridge.BG};
         text-style: bold;
     }}
-    DataTable > .datatable--hover {{ background: {bridge.SURFACE_3}; }}
-
     Input, Select {{
         background: {bridge.SURFACE_2};
         border: tall {bridge.BORDER_STRONG};
@@ -141,19 +139,57 @@ class PonishaTUI(App):
 
     VerticalScroll {{ background: {bridge.BG}; }}
     #notice {{ color: {bridge.MUTED}; padding: 0 2; height: auto; }}
+
+    /* Settings: one tab per dashboard section, the active one in the accent. */
+    #tabs {{ height: 1; padding: 0 1; background: {bridge.SURFACE_1}; }}
+    .tab {{
+        color: {bridge.MUTED};
+        padding: 0 2;
+        height: 1;
+    }}
+    .tab-active {{
+        color: {bridge.BG};
+        background: {bridge.ACCENT};
+        text-style: bold;
+        padding: 0 2;
+        height: 1;
+    }}
+    .section {{
+        padding: 1 2;
+        height: auto;
+    }}
+    .field-row {{ height: auto; }}
+    .field-label {{ width: 26; color: {bridge.MUTED}; }}
     """
 
-    # Tab and Shift+Tab are the only way between screens. No single-key screen
-    # shortcuts: a digit bound at the app level is swallowed by any focused
-    # Input before it arrives, so the shortcut would work on the dashboard and
-    # silently fail on the login screen — the one screen where typing a number
-    # is the whole point. The menu instead binds digits itself, where there is
-    # no text field to compete with.
+    # Between screens: Tab/Shift+Tab, and `]`/`[` everywhere.
+    #
+    # The brackets exist because the Settings screen rebinds Tab to its section
+    # tabs — a binding declared there is consulted before this one, so Tab could
+    # no longer change screens. Rather than make the keys mean different things
+    # per screen, `]`/`[` mean the same thing on all of them.
+    #
+    # No numeric shortcuts here on purpose: a digit bound at the app level is
+    # swallowed by any focused Input before it arrives, so it would work on the
+    # dashboard and silently fail on the login screen — the one screen where
+    # typing a number is the whole point. The menu binds its own digits.
     BINDINGS = [
         Binding("q", "quit", "quit", priority=True),
         Binding("ctrl+c", "quit", "quit", show=False, priority=True),
         Binding("tab", "next_screen", "next", priority=True),
         Binding("shift+tab", "prev_screen", "prev", priority=True),
+        # Screen changes while a text field has focus.
+        #
+        # `]`/`[` were the obvious choice and do not work: a focused Input
+        # swallows any printable key before the app ever sees the event, so
+        # those keys did nothing on the login and settings screens — both of
+        # which hold focus in a field. Confirmed directly: a printable key
+        # never reaches `App._on_key` at all. Ctrl+arrows are not printable and
+        # arrive, so they are the ones bound.
+        Binding("ctrl+right", "next_screen_always", "next", show=False,
+                priority=True),
+        Binding("ctrl+left", "prev_screen_always", "prev", show=False,
+                priority=True),
         Binding("escape", "back", "back", priority=True),
         Binding("r", "refresh_status", "refresh", show=False),
         Binding("m", "menu", "menu", show=False),
@@ -171,6 +207,20 @@ class PonishaTUI(App):
         self._log_buf: list = []
         self._lock = threading.Lock()
         self._installed_classes = list(self.SCREEN_CLASSES)
+
+    def get_driver_class(self):
+        """Return this platform's driver with mouse reporting switched off.
+
+        Textual enables mouse reporting by default, which makes clicks, wheel
+        scrolling, hover and drag-select all live. This interface is
+        keyboard-only, and the driver is the only place to turn that off — every
+        widget would otherwise have to swallow the events itself.
+
+        The parent's choice is kept and only `mouse` is bound, so the Windows
+        and Linux drivers are both covered without naming either.
+        """
+        import functools
+        return functools.partial(super().get_driver_class(), mouse=False)
 
     # ── lifecycle ──
     def on_mount(self) -> None:
@@ -298,10 +348,36 @@ class PonishaTUI(App):
         return 0
 
     def action_next_screen(self) -> None:
+        # Let a screen claim Tab if it has its own use for it.
+        #
+        # App._on_key checks the app's bindings first and only forwards the
+        # event when they miss, so a screen binding for Tab never fires — the
+        # app wins even against one marked priority. Delegating here is the only
+        # way to make the key mean "next section" inside Settings while every
+        # other screen keeps it as "next screen".
+        if self._delegate_to_screen("next_section"):
+            return
         self._cycle(1)
 
     def action_prev_screen(self) -> None:
+        if self._delegate_to_screen("prev_section"):
+            return
         self._cycle(-1)
+
+    def action_next_screen_always(self) -> None:
+        """Unconditional screen cycle, for `]`."""
+        self._cycle(1)
+
+    def action_prev_screen_always(self) -> None:
+        """Unconditional screen cycle, for `[`."""
+        self._cycle(-1)
+
+    def _delegate_to_screen(self, action: str) -> bool:
+        handler = getattr(self.screen, f"action_{action}", None)
+        if handler is None:
+            return False
+        handler()
+        return True
 
     def _cycle(self, step: int) -> None:
         names = [c.SCREEN_NAME for c in self._installed_classes]

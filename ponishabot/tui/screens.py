@@ -371,77 +371,145 @@ class SettingsScreen(BaseScreen):
 
     BINDINGS = BaseScreen.BINDINGS + [
         Binding("ctrl+s", "save", "save"),
-        Binding("enter", "focus_next", "next"),
         Binding("escape", "revert", "revert"),
         Binding("x", "toggle_switch", "toggle", show=False),
     ]
 
-    # (config attribute, label, kind) — mirrors the dashboard's sections.
-    FIELDS = [
-        ("dry_run", "notify only (dry_run)", "switch"),
-        ("headless", "headless Chrome", "switch"),
-        ("show_browser", "show live browser", "switch"),
-        ("refresh_interval", "poll interval (sec)", "int"),
-        ("max_pages", "max pages", "int"),
-        ("priority_window_minutes", "priority window (min)", "int"),
-        ("min_skill_match", "min skill match", "float"),
-        ("min_remaining_proposals", "stop at quota", "int"),
-        ("budget_min", "budget min (Toman)", "int"),
-        ("budget_max", "budget max (Toman)", "int"),
-        ("telegram_token", "Telegram token", "secret"),
-        ("telegram_chat_id", "Telegram chat id", "text"),
-        ("skills", "skills (comma separated)", "list"),
-        ("profile_name", "name", "text"),
-        ("profile_about", "AI instructions", "text"),
-        ("profile_hourly_min", "hourly min", "int"),
-        ("profile_hourly_max", "hourly max", "int"),
-        ("ai_enabled", "AI engine", "switch"),
-        ("ai_base_url", "endpoint URL", "text"),
-        ("ai_api_key", "API key", "secret"),
-        ("ai_model", "model", "text"),
-        ("ai_min_skill_gate", "skill gate", "float"),
-        ("ai_temperature", "temperature", "float"),
-        ("ai_max_description_chars", "max description chars", "int"),
-        ("karlancer_enabled", "Karlancer market data", "switch"),
-        ("karlancer_max_pages", "Karlancer pages", "int"),
-        ("high_competition_threshold", "high competition at", "int"),
-        ("urgency_premium_percent", "urgent premium (%)", "int"),
-        ("premium_badge_multiplier", "premium badge multiplier", "float"),
-        ("low_competition_discount_percent", "low competition (%)", "int"),
-        ("high_competition_discount_percent", "high competition (%)", "int"),
-        ("forex_enabled", "forex uplift", "switch"),
-        ("baseline_usd_rate", "baseline USD rate", "int"),
-        ("forex_sensitivity", "forex sensitivity", "float"),
-        ("forex_source", "rate source", "text"),
-        ("karlancer_soft_clamp_enabled", "soft clamp", "switch"),
-        ("karlancer_clamp_multiplier", "clamp multiplier", "float"),
-        ("karlancer_target_multiplier", "target multiplier", "float"),
+    # Declared so the app can see them, not as bindings: `App._on_key` runs the
+    # app's own bindings first and never forwards Tab here. `action_next_screen`
+    # checks for these two names on the active screen and calls them instead of
+    # cycling. Tab would otherwise always change screens.
+
+    # Every setting, grouped exactly as the web dashboard groups them. The order
+    # is not cosmetic: flat, `budget_max` sat next to `ai_temperature` with
+    # nothing to say they belong to different parts of the bot, and reaching the
+    # last field meant 38 presses of Tab.
+    #
+    # (attr, label, kind); the section name is its tab.
+    SECTIONS = [
+        ("Controls", [
+            ("dry_run", "notify only", "switch"),
+            ("headless", "headless Chrome", "switch"),
+            ("show_browser", "show live browser", "switch"),
+            ("proposal_template", "proposal file", "text"),
+            ("user_data_dir", "Chrome profile dir", "text"),
+        ]),
+        ("Telegram", [
+            ("telegram_token", "bot token", "secret"),
+            ("telegram_chat_id", "chat id", "text"),
+        ]),
+        ("Search & budget", [
+            ("skills", "skills (comma separated)", "list"),
+            ("budget_min", "budget min (Toman)", "int"),
+            ("budget_max", "budget max (Toman)", "int"),
+            ("refresh_interval", "poll interval (sec)", "int"),
+            ("priority_window_minutes", "priority window (min)", "int"),
+            ("min_skill_match", "min skill match", "float"),
+            ("max_pages", "max pages", "int"),
+            ("min_remaining_proposals", "stop at quota", "int"),
+        ]),
+        ("Profile", [
+            ("profile_name", "name", "text"),
+            ("profile_about", "AI instructions", "text"),
+            ("profile_hourly_min", "hourly min", "int"),
+            ("profile_hourly_max", "hourly max", "int"),
+        ]),
+        ("AI", [
+            ("ai_enabled", "AI engine", "switch"),
+            ("karlancer_enabled", "Karlancer market data", "switch"),
+            ("ai_base_url", "endpoint URL", "text"),
+            ("ai_api_key", "API key", "secret"),
+            ("ai_model", "model", "text"),
+            ("ai_min_skill_gate", "skill gate", "float"),
+            ("ai_temperature", "temperature", "float"),
+            ("ai_max_description_chars", "max description chars", "int"),
+            ("karlancer_max_pages", "Karlancer pages", "int"),
+        ]),
+        ("Pricing", [
+            ("high_competition_threshold", "high competition at", "int"),
+            ("urgency_premium_percent", "urgent premium (%)", "int"),
+            ("premium_badge_multiplier", "premium badge multiplier", "float"),
+            ("low_competition_discount_percent", "low competition (%)", "int"),
+            ("high_competition_discount_percent", "high competition (%)", "int"),
+        ]),
+        ("Forex & clamp", [
+            ("forex_enabled", "forex uplift", "switch"),
+            ("karlancer_soft_clamp_enabled", "soft clamp", "switch"),
+            ("baseline_usd_rate", "baseline USD rate", "int"),
+            ("forex_sensitivity", "forex sensitivity", "float"),
+            ("forex_source", "rate source", "text"),
+            ("karlancer_clamp_multiplier", "clamp multiplier", "float"),
+            ("karlancer_target_multiplier", "target multiplier", "float"),
+        ]),
     ]
 
+    # Kept as a derived view so the save/revert code has one flat list to walk.
+    FIELDS = [f for _name, fields in SECTIONS for f in fields]
+
+    def __init__(self, tui) -> None:
+        super().__init__(tui)
+        # Set here, not in on_mount: compose() runs first and reads it to decide
+        # which tab is lit.
+        self._section = 0
+
     def compose(self) -> ComposeResult:
-        yield VerticalScroll(id="fields")
+        yield Horizontal(id="tabs")
+        for i, (name, _fields) in enumerate(self.SECTIONS):
+            with Vertical(id=f"sec-{i}", classes="section"):
+                pass
         yield Static("", id="notice")
 
     def on_mount(self) -> None:
-        box = self.query_one("#fields", VerticalScroll)
+        tabs = self.query_one("#tabs", Horizontal)
+        for name, _fields in self.SECTIONS:
+            tabs.mount(Static(name, classes="tab"))
+
         self._inputs: dict = {}
-        for attr, label, kind in self.FIELDS:
-            value = getattr(self.bot.cfg, attr, "")
-            if kind == "switch":
-                box.mount(Horizontal(
-                    Label(f"{label}  ", classes="muted"),
-                    Switch(value=bool(value), id=f"f-{attr}"), classes="row"))
-            else:
-                if kind == "secret":
-                    value = "•" * 8 if value else ""
-                elif kind == "list":
-                    value = ", ".join(value or [])
-                inp = Input(value=str(value), password=(kind == "secret"),
-                            id=f"f-{attr}")
-                self._inputs[attr] = inp
-                box.mount(Horizontal(Label(f"{label}  ", classes="muted"), inp,
-                                     classes="row"))
-        self._note("Tab between fields · Ctrl+S to save · Esc to revert")
+        for i, (_name, fields) in enumerate(self.SECTIONS):
+            box = self.query_one(f"#sec-{i}", Vertical)
+            for attr, label, kind in fields:
+                value = getattr(self.bot.cfg, attr, "")
+                if kind == "switch":
+                    box.mount(Horizontal(
+                        Label(f"{label}  ", classes="field-label"),
+                        Switch(value=bool(value), id=f"f-{attr}"),
+                        classes="field-row"))
+                else:
+                    if kind == "secret":
+                        value = "•" * 8 if value else ""
+                    elif kind == "list":
+                        value = ", ".join(value or [])
+                    inp = Input(value=str(value), password=(kind == "secret"),
+                                id=f"f-{attr}")
+                    self._inputs[attr] = inp
+                    box.mount(Horizontal(
+                        Label(f"{label}  ", classes="field-label"), inp,
+                        classes="field-row"))
+        self._show_section(0)
+        self._note("Tab section · ↑↓ field · x toggle · Ctrl+S save · Esc revert")
+
+    # ── tabs ──
+    def _show_section(self, index: int) -> None:
+        self._section = index % len(self.SECTIONS)
+        for i, _name in enumerate(self.SECTIONS):
+            self.query_one(f"#sec-{i}").display = (i == self._section)
+        for i, tab in enumerate(self.query_one("#tabs", Horizontal).children):
+            tab.set_classes("tab-active" if i == self._section else "tab")
+
+    def action_next_section(self) -> None:
+        self._show_section(self._section + 1)
+
+    def action_prev_section(self) -> None:
+        self._show_section(self._section - 1)
+
+    # Movement within the active section is the base class's j/k/up/down, which
+    # resolve to Textual's focus_next/focus_previous. Only the visible section's
+    # widgets are focusable, so they stay inside the tab.
+    def action_cursor_down(self) -> None:
+        self.focus_next()
+
+    def action_cursor_up(self) -> None:
+        self.focus_previous()
 
     def _note(self, message: str, kind: str = "muted") -> None:
         colour = {"ok": bridge.OK, "err": bridge.DANGER}.get(kind, bridge.MUTED_2)

@@ -744,7 +744,10 @@ class TuiNavigation(unittest.TestCase):
         self.assertEqual(self._run(scenario()), [],
                          "on_mount must not start the monitor")
 
-    def test_tab_cycles_through_every_screen_and_wraps(self):
+    def test_ctrl_arrows_cycle_through_every_screen_and_wrap(self):
+        """Ctrl+arrows change screens, and keep working while a text field has
+        focus — which is why they are not `]`/`[`. A printable key never
+        reaches the app at all when an Input is focused."""
         async def scenario():
             app = self._build()
             from ponishabot.tui.screens import ALL_SCREENS
@@ -754,7 +757,7 @@ class TuiNavigation(unittest.TestCase):
                 seen = []
                 for _ in range(count):
                     seen.append(type(app.screen).__name__)
-                    await pilot.press("tab")
+                    await pilot.press("ctrl+right")
                     await pilot.pause()
                 wrapped = type(app.screen).__name__
                 await pilot.press("q")
@@ -762,17 +765,38 @@ class TuiNavigation(unittest.TestCase):
 
         seen, wrapped, count = self._run(scenario())
         self.assertEqual(len(set(seen)), count, f"screens not distinct: {seen}")
-        self.assertEqual(wrapped, seen[0], "Tab did not wrap around")
+        self.assertEqual(wrapped, seen[0], "the cycle did not wrap around")
 
-    def test_shift_tab_goes_backwards(self):
+    def test_screen_change_works_with_a_field_focused(self):
+        """The regression: on the login screen focus sits in a text field, and
+        a printable navigation key was swallowed there, leaving no way out."""
         async def scenario():
             app = self._build()
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                await pilot.press("tab")
+                await pilot.press("4")               # menu -> login
+                await pilot.pause()
+                focused = type(app.focused).__name__
+                await pilot.press("ctrl+right")
+                await pilot.pause()
+                after = type(app.screen).__name__
+                await pilot.press("q")
+                return focused, after
+
+        focused, after = self._run(scenario())
+        self.assertEqual(focused, "Input", "the test needs a field to be focused")
+        self.assertNotEqual(after, "LoginScreen",
+                            "ctrl+right did not leave the login screen")
+
+    def test_ctrl_left_goes_backwards(self):
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("ctrl+right")
                 await pilot.pause()
                 forward = type(app.screen).__name__
-                await pilot.press("shift+tab")
+                await pilot.press("ctrl+left")
                 await pilot.pause()
                 back = type(app.screen).__name__
                 await pilot.press("q")
@@ -780,6 +804,106 @@ class TuiNavigation(unittest.TestCase):
 
         forward, back = self._run(scenario())
         self.assertNotEqual(forward, back)
+
+    def test_settings_sections_cover_every_field(self):
+        """The section tabs must hold the same settings the dashboard does,
+        with nothing dropped in the regrouping."""
+        from ponishabot.tui.screens import SettingsScreen
+        counts = {name: len(fields) for name, fields in SettingsScreen.SECTIONS}
+        self.assertEqual(counts, {
+            "Controls": 5, "Telegram": 2, "Search & budget": 8, "Profile": 4,
+            "AI": 9, "Pricing": 5, "Forex & clamp": 7,
+        })
+        self.assertEqual(sum(counts.values()), 40)
+
+    def test_settings_tab_cycles_sections_not_screens(self):
+        """Inside Settings, Tab moves between the sections."""
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("3")               # menu -> settings
+                await pilot.pause()
+                names = []
+                for _ in range(8):                   # one more than the count
+                    scr = app.screen
+                    self.assertEqual(type(scr).__name__, "SettingsScreen",
+                                     "Tab left the settings screen")
+                    names.append(scr.SECTIONS[scr._section][0])
+                    await pilot.press("tab")
+                    await pilot.pause()
+                await pilot.press("q")
+                return names
+
+        names = self._run(scenario())
+        self.assertEqual(len(set(names)), 7, f"sections: {names}")
+        self.assertEqual(names[0], names[7], "the sections did not wrap")
+
+    def test_settings_saves_fields_from_a_hidden_section(self):
+        """Ctrl+S must read every section, not only the visible one.
+
+        A field the user edited and then tabbed away from still holds the new
+        value; saving only the active tab would report success while silently
+        discarding it.
+        """
+        async def scenario():
+            from textual.widgets import Input
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("3")
+                await pilot.pause()
+                # Telegram is section 1; edit it, then move to Controls.
+                await pilot.press("tab")
+                await pilot.pause()
+                chat = app.screen.query_one("#f-telegram_chat_id", Input)
+                chat.value = "424242"
+                await pilot.press("tab")             # away from Telegram
+                await pilot.pause()
+                self.assertNotEqual(app.screen._section, 1,
+                                    "the test needs Telegram hidden")
+                await pilot.press("ctrl+s")
+                await pilot.pause()
+                value = app.bot.cfg.telegram_chat_id
+                await pilot.press("q")
+                return value
+
+        self.assertEqual(self._run(scenario()), "424242",
+                         "a hidden section's edit was not saved")
+
+    def test_settings_revert_restores_every_section(self):
+        """Esc reverts every section, not only the visible one."""
+        async def scenario():
+            from textual.widgets import Input
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("3")
+                await pilot.pause()
+                scr = app.screen
+                # Edit a field in a section that is not on screen, then revert
+                # without ever showing it.
+                hidden = scr.query_one("#f-telegram_chat_id", Input)
+                stored = hidden.value
+                hidden.value = "999999"
+                self.assertNotEqual(scr._section, 1, "Telegram must be hidden")
+                scr.action_revert()
+                await pilot.pause()
+                after = scr.query_one("#f-telegram_chat_id", Input).value
+                await pilot.press("q")
+                return after, stored
+
+        after, stored = self._run(scenario())
+        self.assertEqual(after, stored,
+                         "Esc did not restore a hidden section's field")
+
+    def test_mouse_reporting_is_disabled(self):
+        """The driver is built with mouse=False, so clicks, wheel and hover do
+        nothing — this interface is keyboard-only."""
+        app = self._build()
+        driver_class = app.get_driver_class()
+        self.assertEqual(getattr(driver_class, "keywords", {}).get("mouse"), False,
+                         "mouse reporting is still on")
 
     def test_vim_keys_move_the_cursor_in_a_table(self):
         """`j`/`k` are documented as alternatives to the arrow keys."""
