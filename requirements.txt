@@ -15,10 +15,13 @@ pycryptodome>=3.20
 # Terminal UI (`python main.py`). Optional at runtime -- the TUI falls back to
 # plain log streaming when either is missing -- but installed by default so the
 # documented command opens the UI rather than printing a warning.
-# textual pulls in rich itself; both are pinned here so a version bump of one
-# cannot silently change how the other renders.
+#
+# rich is listed explicitly because the TUI imports it directly
+# (`rich.cells.cell_len`, `rich.text.Text`), not only through textual. The floor
+# matches what textual itself requires: a lower one would let pip pick a version
+# textual refuses, which is a conflict resolvable only by chance.
 textual>=8.0
-rich>=13.0
+rich>=14.2.0
 django>=5.0
 # gunicorn is NOT used by this project (the service runs `manage.py bot`) and
 # the dashboard must never run behind multiple workers — see the README's
