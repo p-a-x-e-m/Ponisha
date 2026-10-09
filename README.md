@@ -67,6 +67,7 @@ bidder           فرم پیشنهاد را با سلنیوم پر و ارسال
 | [ponishabot/models.py](ponishabot/models.py) | 64 | `Project` / `Profile` / `BidPlan` |
 | [ponishabot/monitor.py](ponishabot/monitor.py) | 269 | حلقهٔ پایش، فیلتر، gate سهمیه |
 | [ponishabot/notifier.py](ponishabot/notifier.py) | 94 | ارسال اعلان تلگرام |
+| [ponishabot/panel.py](ponishabot/panel.py) | 558 | پنل ترمینال: وضعیت زنده، کلیدها، فیلتر لاگ |
 | [ponishabot/paths.py](ponishabot/paths.py) | 23 | مسیر همهٔ فایل‌ها (نسبت به ریشه، نه CWD) |
 | [ponishabot/scraper.py](ponishabot/scraper.py) | 550 | اسکرپ لیستینگ/جزئیات، خواندن سهمیه |
 | [ponishabot/skills.py](ponishabot/skills.py) | 120 | کاتالوگ مهارت‌های پونیشا (کش ۷ روزه) |
@@ -115,6 +116,9 @@ python -m unittest discover -s tests -v
 | `HeuristicPricing` | مثال عددی README (۹٬۰۰۰٬۰۰۰ / ۱۵ روز)، کف لیستینگ، و رد نشدن پروژهٔ بدون تگ مهارت |
 | `AIPricingAdjustments` | کلَمپ Karlancer در هر دو حالت فعال/غیرفعال، گرد‌کردن، و بالا کشیدن به کف |
 | `LLMResponseParsing` | JSON خراب یا محصور در fence نباید exception بدهد (باید به هیوریستیک برگردد) |
+| `PanelLogHandling` | جمع‌کردن خطوط تکراری (`Forex fetch failed ×۹`)، فیلتر نویز، و اینکه رویدادهای ربات در دید پیش‌فرض بمانند |
+| `PanelFormatting` | قالب پول/زمان و امنیت markup — پیام لاگ با `[` نباید rich را کرش کند |
+| `TerminalSingleton` | رگرسیون: `main.py` نباید `BotApp` دوم بسازد (وگرنه پنل روی نمونهٔ اشتباه گزارش می‌دهد) |
 | `ConfigDefaults` | پیش‌فرض‌هایی که README مستند کرده — از جمله `dry_run: true` |
 
 CI روی هر push و PR اجرا می‌شود ([.github/workflows/tests.yml](.github/workflows/tests.yml))
@@ -132,9 +136,51 @@ CI روی هر push و PR اجرا می‌شود ([.github/workflows/tests.yml](
 
 ```bash
 python manage.py bot                # رابط وب → http://127.0.0.1:8000/
-python main.py --no-gui             # حالت ترمینال، بدون مرورگر
+python main.py                      # پنل ترمینال تعاملی
+python main.py --plain              # فقط لاگ، بدون پنل
 python manage.py bot_login          # باز کردن کروم برای لاگین دستی
 ```
+
+### `main.py` — پنل ترمینال
+
+همان کاری را می‌کند که داشبورد می‌کند، بدون باز کردن مرورگر: وضعیت زنده و کنترل.
+
+```
+┌─ ponishabot ─────────────────────────────[ DRY_RUN ]─┐
+│ ● در حال اجرا          سهمیه ۶۰  ·  متچ ۳  ·  بید ۱۱ │
+│ AI فعال · فاصله ۶۰s · جلسه معتبر   Uptime 1h 02m     │
+├──────────────────────────────────────────────────────┤
+│ آخرین پیشنهادها                                       │
+│ ۷٬۷۰۰٬۰۰۰  ربات تلگرام فروشگاه · ۱۵ روز              │
+├──────────────────────────────────────────────────────┤
+│ لاگ                                                  │
+│ 16:32 AI: bid 7,700,000 Toman — matched              │
+│ 16:32 Rejected: طراحی لوگو (overlap 20% < 50%)       │
+└──────────────────────────────────────────────────────┘
+ s توقف  d dry-run=خاموش  l ورود  v لاگ  c پاک‌کردن  q خروج
+```
+
+| آرگومان | پیش‌فرض | توضیح |
+|---|---|---|
+| `--plain` | خاموش | به‌جای پنل، فقط لاگ را بریزد |
+| `--log-level` | `important` | `important` (پیش‌فرض) · `info` · `debug` |
+
+| کلید | کار |
+|---|---|
+| `s` | شروع / توقف مانیتور |
+| `d` | روشن/خاموش کردن `dry_run` |
+| `l` | باز کردن مرورگر برای ورود |
+| `v` | چرخش سطح لاگ (important → debug → info) |
+| `c` | پاک کردن لاگ نمایش‌داده‌شده |
+| `q` | خروج تمیز (درایور کروم بسته می‌شود) |
+
+> **لاگ هوشمند فیلتر می‌شود.** یک اجرای سالم پر از `Forex fetch failed` است که
+> هزار بار تکرار می‌شود و بقیهٔ لاگ را زیر خودش می‌برد. پنل خطوط تکراری را جمع
+> می‌کند (`×۹`) و نویز شناخته‌شده را پنهان می‌کند — در یک نمونه، **۴۸۱۷ خط خام به
+> ۳۰۳ ردیف خواندنی** رسید. کلید `v` همه‌چیز را نشان می‌دهد.
+
+> **تخریب نرم:** اگر `rich` نصب نباشد یا خروجی به فایل/پایپ برود، خودش به حالت
+> لاگ‌محور برمی‌گردد و پیام می‌دهد — نه کرش.
 
 ### `manage.py bot`
 
@@ -574,7 +620,8 @@ sudo systemctl enable --now ponishabot
 ## ساختار پوشه‌ها
 
 ```
-main.py                  ورودی ترمینال (مانیتور در کنسول)
+main.py                  ورودی ترمینال (پنل تعاملی)
+ponishabot/panel.py      خود پنل ترمینال (وضعیت، کلیدها، فیلتر لاگ)
 manage.py                ورودی وب جنگو (`python manage.py bot`)
 web/                     تنظیمات پروژهٔ جنگو
 dashboard/               اپ وب: ویوها، تمپلیت‌ها، استاتیک
@@ -666,6 +713,7 @@ bidder           fills and submits the proposal form with Selenium
 | [ponishabot/models.py](ponishabot/models.py) | 64 | `Project` / `Profile` / `BidPlan` |
 | [ponishabot/monitor.py](ponishabot/monitor.py) | 269 | Poll loop, filtering, quota gate |
 | [ponishabot/notifier.py](ponishabot/notifier.py) | 94 | Telegram alerts |
+| [ponishabot/panel.py](ponishabot/panel.py) | 558 | Terminal panel: live status, keys, log filter |
 | [ponishabot/paths.py](ponishabot/paths.py) | 23 | Every file path (anchored to the repo root, not CWD) |
 | [ponishabot/scraper.py](ponishabot/scraper.py) | 550 | Listing/detail scraping, quota read |
 | [ponishabot/skills.py](ponishabot/skills.py) | 120 | ponisha skill taxonomy (7-day cache) |
@@ -713,6 +761,9 @@ functions — where the expensive mistakes live:
 | `HeuristicPricing` | The README's worked example (9,000,000 / 15 days), the listing floor, and that an untagged listing is not rejected |
 | `AIPricingAdjustments` | The Karlancer clamp firing and not firing, rounding, and the raise to the floor |
 | `LLMResponseParsing` | Malformed or fence-wrapped JSON must not raise (it has to fall back to the heuristic) |
+| `PanelLogHandling` | Collapsing repeats (`Forex fetch failed ×9`), noise filtering, and that bot events survive the default view |
+| `PanelFormatting` | Money/duration formatting and markup safety — a log message containing `[` must not crash rich |
+| `TerminalSingleton` | Regression: `main.py` must not build a second `BotApp` (the panel would report on the wrong one) |
 | `ConfigDefaults` | The defaults the README documents — including `dry_run: true` |
 
 CI runs on every push and pull request
@@ -730,9 +781,51 @@ CI runs on every push and pull request
 
 ```bash
 python manage.py bot                # web dashboard → http://127.0.0.1:8000/
-python main.py --no-gui             # terminal mode, no browser UI
+python main.py                      # interactive terminal panel
+python main.py --plain              # logs only, no panel
 python manage.py bot_login          # open Chrome for a manual login
 ```
+
+### `main.py` — terminal panel
+
+Does what the dashboard does, without opening a browser: live status and controls.
+
+```
+┌─ ponishabot ─────────────────────────────[ DRY_RUN ]─┐
+│ ● RUNNING           quota 60  ·  matches 3  ·  bids 11│
+│ AI on · every 60s · session valid   uptime 1h 02m     │
+├───────────────────────────────────────────────────────┤
+│ latest proposals                                       │
+│ 7,700,000  Telegram bot for a shop · 15 days           │
+├───────────────────────────────────────────────────────┤
+│ log                                                    │
+│ 16:32 AI: bid 7,700,000 Toman — matched                │
+│ 16:32 Rejected: logo design (overlap 20% < 50%)        │
+└───────────────────────────────────────────────────────┘
+ s stop  d dry-run=off  l login  v log  c clear  q quit
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--plain` | off | stream the log instead of the panel |
+| `--log-level` | `important` | `important` · `info` · `debug` |
+
+| Key | Action |
+|---|---|
+| `s` | start / stop the monitor |
+| `d` | toggle `dry_run` |
+| `l` | open the browser to log in |
+| `v` | cycle the log level (important → debug → info) |
+| `c` | clear the displayed log |
+| `q` | clean exit (closes the Chrome driver) |
+
+> **The log is filtered, not dumped.** A healthy run is full of `Forex fetch
+> failed` repeating endlessly, which buries everything else. The panel collapses
+> repeats into a count (`×9`) and hides known noise — in one real sample, **4,817
+> raw lines became 303 readable rows**. `v` shows everything.
+
+> **Degrades instead of breaking.** With `rich` missing, or output piped to a
+> file, it falls back to plain log streaming and says so — never an exception.
 
 ### `manage.py bot`
 
@@ -1179,7 +1272,8 @@ cycle (Selenium + AI) can finish. Production runs `DJANGO_DEBUG=0`, and
 ## Layout
 
 ```
-main.py                  terminal entry (monitor in console)
+main.py                  terminal entry (interactive panel)
+ponishabot/panel.py      the terminal panel itself (status, keys, log filter)
 manage.py                Django web entry (`python manage.py bot`)
 web/                     Django project settings
 dashboard/               web app: views, templates, static

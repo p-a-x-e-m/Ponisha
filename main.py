@@ -20,8 +20,7 @@ except (AttributeError, ValueError):
 
 from ponishabot.paths import LOG_PATH
 
-from ponishabot.config import ConfigLoader
-from ponishabot.app import BotApp
+from ponishabot import botstate
 from ponishabot.notifier import TelegramNotifier
 
 logging.basicConfig(
@@ -63,13 +62,24 @@ def main():
     parser = argparse.ArgumentParser(description="ponishabot — terminal monitor for ponisha.ir")
     parser.add_argument("--no-gui", action="store_true",
                         help="kept for compatibility; terminal is always used")
+    parser.add_argument("--plain", action="store_true",
+                        help="stream the log instead of the interactive panel")
+    parser.add_argument("--log-level", choices=("important", "info", "debug"),
+                        default="important",
+                        help="how much the panel shows (default: important)")
     args = parser.parse_args()
 
-    cfg = ConfigLoader.load()
-    app = BotApp(cfg)
+    # Use the process-wide singleton rather than a fresh BotApp. A second
+    # instance would carry its own Selenium driver and its own monitor while
+    # botstate.status_snapshot() reported on the first one, so the panel would
+    # show "stopped" with no quota while the bot was actually running. The web
+    # dashboard has always gone through get_app() for the same reason.
+    app = botstate.get_app()
+    cfg = app.cfg
     TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id).notify_startup(
         "DRY_RUN" if cfg.dry_run else "LIVE")
-    app.run_terminal()
+
+    app.run_terminal(plain=args.plain, level=args.log_level)
 
 
 if __name__ == "__main__":

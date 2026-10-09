@@ -528,10 +528,20 @@ class BotApp:
         return bool(self._submit_bid_locked(enriched, plan))
 
     # ─── Terminal mode ───
-    def run_terminal(self) -> None:
+    def build_monitor(self) -> bool:
+        """Authenticate and wire the monitor, without starting it.
+
+        Shared by the terminal panel and `start()`. The panel needs the monitor
+        object before anything runs so it can attach its observer, and it owns
+        the main thread, so it cannot call `start()` and then render — the
+        monitor has to be launched separately, in a background thread.
+        """
+        if self.monitor is not None:
+            return True
         if not self.ensure_auth(interactive=True):
             logger.critical("Authentication failed")
-            return
+            return False
+
         session = self.auth.build_session()
         # api_session gives the scraper access to api.ponisha.ir so the
         # proposal-quota gate works here exactly as it does in the GUI.
@@ -554,22 +564,52 @@ class BotApp:
         if not self.cfg.dry_run:
             self._proposal = self._load_proposal()
             self.bidder = PonishaBidder(self.auth, self._proposal)
+        return True
+
+    def start_monitor_thread(self) -> threading.Thread:
+        """Run the monitor loop in a daemon thread and return it.
+
+        The terminal panel renders and reads keys on the main thread, so the
+        monitor cannot run there; this mirrors what `start()` does for the web
+        dashboard.
+        """
+        self._thread = threading.Thread(target=self.monitor.start, daemon=True)
+        self._thread.start()
+        logger.info("Monitor started in background thread (terminal panel)")
+        return self._thread
+
+    def run_terminal(self, plain: bool = False, level: str = "important") -> None:
+        """Terminal entry: build the monitor, then hand over to the panel."""
+        from ponishabot.panel import run_panel, run_plain
+
+        if not self.build_monitor():
+            return
 
         def handle_interrupt(signum, frame):
+            # Raising here lets the panel's own KeyboardInterrupt path run, so
+            # the driver is closed by the `finally` below rather than leaving
+            # a Chrome window behind.
             logger.info("Interrupt signal received, shutting down...")
-            sys.exit(0)
+            raise KeyboardInterrupt
 
         try:
             signal.signal(signal.SIGINT, handle_interrupt)
         except (ValueError, AttributeError):
             pass
 
+        if not self.is_running():
+            self.start_monitor_thread()
+
         try:
-            self.monitor.start()
+            if plain:
+                run_plain(self)
+            else:
+                run_panel(self, level=level)
         except KeyboardInterrupt:
             logger.info("Stopped by user")
         finally:
             self._stop_live.set()
+            self.stop()
             with self._lock:
                 self.auth.close_driver()
             logger.info("Clean exit")

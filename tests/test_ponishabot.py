@@ -15,7 +15,8 @@ import sys
 import unittest
 
 # Import the package from the repo root, wherever the tests are launched from.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
 from bs4 import BeautifulSoup
 
@@ -333,6 +334,195 @@ class PassphraseHandling(unittest.TestCase):
         """_token_cookies swallows the ValueError into an empty list, which the
         caller reads as 'cookie path unavailable'."""
         self.assertEqual(self.auth.PonishaAuth()._token_cookies(), [])
+
+
+class PanelLogHandling(unittest.TestCase):
+    """The terminal panel's log filter. Pure string work, so it is testable
+    without a TTY — which matters because the panel's job is partly to hide
+    noise the console used to dump raw."""
+
+    def setUp(self):
+        from ponishabot import panel
+        self.panel = panel
+
+    # A real excerpt: the run that motivated the filter had this line nine
+    # times in a row, burying everything else.
+    NOISY = [
+        "2026-10-09 16:32:09,379 - WARNING - Forex fetch failed: HTTPSConnectionPool(host='api.wallex.ir')",
+    ] * 9 + [
+        "2026-10-09 16:32:10,000 - INFO - Karlancer market: 48 projects, avg=5806666",
+        "2026-10-09 16:32:11,000 - ERROR - Error in monitor cycle: boom",
+    ]
+
+    def test_classify_splits_level_time_message(self):
+        lvl, ts, msg = self.panel.classify_line(
+            "2026-10-09 16:32:10,000 - INFO - hello")
+        self.assertEqual(lvl, "INFO")
+        self.assertEqual(ts, "16:32:10")
+        self.assertEqual(msg, "hello")
+
+    def test_classify_survives_a_non_log_line(self):
+        """Tracebacks and banners have no level; they must not crash the panel."""
+        lvl, ts, msg = self.panel.classify_line("  File \"x.py\", line 3")
+        self.assertEqual(lvl, "info")
+        self.assertEqual(ts, "")
+        self.assertIn("line 3", msg)
+
+    def test_noise_is_recognised(self):
+        self.assertTrue(self.panel.is_noise("Forex fetch failed: timeout"))
+        self.assertFalse(self.panel.is_noise("Karlancer market: 48 projects"))
+
+    def test_noise_hidden_by_default_and_shown_on_request(self):
+        default = self.panel.filter_lines(self.NOISY, level="info")
+        self.assertFalse(any("Forex fetch failed" in l for l in default))
+        shown = self.panel.filter_lines(self.NOISY, level="info", show_noise=True)
+        self.assertTrue(any("Forex fetch failed" in l for l in shown))
+
+    def test_important_keeps_errors_and_drops_plain_info(self):
+        lines = self.NOISY + [
+            "2026-10-09 16:32:12,000 - INFO - Decision engine: AI (respone) with heuristic fallback",
+        ]
+        kept = self.panel.filter_lines(lines, level="important")
+        self.assertTrue(any("ERROR" in l for l in kept))
+        self.assertFalse(any("Decision engine" in l for l in kept))
+
+    def test_info_keeps_info_lines(self):
+        kept = self.panel.filter_lines(self.NOISY, level="info")
+        self.assertTrue(any("Karlancer market" in l for l in kept))
+
+    def test_important_still_shows_bot_activity(self):
+        """A healthy run is mostly INFO. Keeping only WARNING+ would leave the
+        default view nearly empty while the bot was working — and the noisiest
+        lines in this project are WARNINGs, so severity makes a poor filter."""
+        lines = [
+            "2026-10-09 16:32:10,000 - INFO - AI: bid 7,700,000 Toman / 15 days — matched",
+            "2026-10-09 16:32:11,000 - INFO - Rejected: طراحی لوگو (skill overlap 20% < 50%)",
+            "2026-10-09 16:32:12,000 - INFO - Monitor started (poll interval: 60s)",
+        ]
+        kept = self.panel.filter_lines(lines, level="important")
+        self.assertEqual(len(kept), 3, "event lines must survive the default view")
+
+    def test_important_still_drops_uninteresting_info(self):
+        lines = [
+            "2026-10-09 16:32:10,000 - INFO - Decision engine: AI (respone) with heuristic fallback",
+            "2026-10-09 16:32:10,000 - INFO - BotApp singleton created (web GUI)",
+        ]
+        self.assertEqual(self.panel.filter_lines(lines, level="important"), [])
+
+    def test_event_classification(self):
+        self.assertTrue(self.panel.is_event("AI: bid 5,000,000 Toman"))
+        self.assertTrue(self.panel.is_event("Monitor stopped"))
+        self.assertFalse(self.panel.is_event("Decision engine: AI (respone)"))
+
+    def test_repeats_collapse_into_one_row_with_a_count(self):
+        """The whole point: nine identical failures become one row."""
+        collapsed = self.panel.collapse_repeats(self.NOISY)
+        noise_rows = [c for c in collapsed if "Forex fetch failed" in c[0]]
+        self.assertEqual(len(noise_rows), 1)
+        self.assertEqual(noise_rows[0][1], 9)
+
+    def test_distinct_lines_are_not_merged(self):
+        collapsed = self.panel.collapse_repeats([
+            "2026-10-09 16:32:10,000 - INFO - a",
+            "2026-10-09 16:32:11,000 - INFO - b",
+        ])
+        self.assertEqual([c[1] for c in collapsed], [1, 1])
+
+    def test_repeated_message_with_different_timestamps_still_collapses(self):
+        """Comparing raw lines would never match: the timestamps differ. The
+        run being counted is exactly this shape."""
+        collapsed = self.panel.collapse_repeats([
+            "2026-10-09 16:32:09,379 - WARNING - same failure",
+            "2026-10-09 16:32:14,474 - WARNING - same failure",
+        ])
+        self.assertEqual(len(collapsed), 1)
+        self.assertEqual(collapsed[0][1], 2)
+
+
+class PanelFormatting(unittest.TestCase):
+    def setUp(self):
+        from ponishabot import panel
+        self.panel = panel
+
+    def test_money_groups_digits(self):
+        self.assertEqual(self.panel.fmt_money(7_700_000), "7٬700٬000")
+
+    def test_money_handles_unknown(self):
+        for v in (None, "", "abc"):
+            self.assertEqual(self.panel.fmt_money(v), "—", v)
+
+    def test_duration_scales(self):
+        self.assertEqual(self.panel.fmt_duration(8), "8s")
+        self.assertEqual(self.panel.fmt_duration(760), "12m 40s")
+        self.assertEqual(self.panel.fmt_duration(11_220), "3h 07m")
+
+    def test_duration_handles_none_and_negative(self):
+        self.assertEqual(self.panel.fmt_duration(None), "—")
+        self.assertEqual(self.panel.fmt_duration(-5), "—")
+
+    def test_layout_switches_on_width(self):
+        self.assertEqual(self.panel.layout_for_width(120), "wide")
+        self.assertEqual(self.panel.layout_for_width(60), "narrow")
+
+    def test_strip_ansi_removes_escapes(self):
+        self.assertEqual(self.panel.strip_ansi("\x1b[31mred\x1b[0m"), "red")
+
+    def _render(self, buf, width=112):
+        """Build the panel offscreen and return it as text."""
+        import io
+        from rich.console import Console
+        panel_obj = self.panel.TerminalPanel.__new__(self.panel.TerminalPanel)
+        panel_obj.level = "debug"
+        panel_obj.show_noise = True
+        panel_obj._recent = []
+        panel_obj._log_buf = buf
+        panel_obj._notice = ""
+        panel_obj._notice_until = 0.0
+        c = Console(width=width, force_terminal=False, no_color=True,
+                    file=io.StringIO())
+        renderable, _keys = panel_obj._build(
+            {"running": False, "quota": 0, "matches": 0, "bids": 0,
+             "dry_run": True, "ai_enabled": False, "has_cookies": False,
+             "refresh_interval": 60, "started_at": None}, width)
+        c.print(renderable)
+        return c.file.getvalue()
+
+    def test_brackets_in_log_do_not_break_markup(self):
+        """Log messages carry brackets (URLs, driver names). Building the row
+        with markup would make rich parse them as tags and raise."""
+        out = self._render([
+            "2026-10-09 16:32:10,000 - INFO - no [win64] chromedriver for [google-chrome]",
+            "2026-10-09 16:32:11,000 - INFO - see https://example.com/a[b]c",
+        ])
+        self.assertIn("win64", out)
+
+    def test_a_very_long_line_renders_without_wrapping_out(self):
+        out = self._render([
+            "2026-10-09 16:32:10,000 - ERROR - " + "x" * 400,
+        ], width=100)
+        self.assertIn("x", out)
+
+
+class TerminalSingleton(unittest.TestCase):
+    """Regression guard for the trap that made the panel report on a BotApp it
+    never ran: main.py built its own instance while botstate held another, so
+    status_snapshot() said "stopped" with no quota during a live run."""
+
+    def test_main_goes_through_get_app(self):
+        source = open(os.path.join(ROOT, "main.py"), encoding="utf-8").read()
+        self.assertIn("botstate.get_app()", source)
+        self.assertNotIn("BotApp(cfg)", source,
+                         "main.py must not construct its own BotApp")
+
+    def test_get_app_is_a_singleton(self):
+        from ponishabot import botstate
+        first = botstate.get_app()
+        self.assertIs(botstate.get_app(), first)
+
+    def test_run_terminal_uses_the_same_instance(self):
+        from ponishabot import botstate
+        app = botstate.get_app()
+        self.assertIs(botstate._app, app)
 
 
 class ConfigDefaults(unittest.TestCase):
