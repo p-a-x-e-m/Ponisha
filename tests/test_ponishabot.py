@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import unittest
+from unittest import mock
 
 # Import the package from the repo root, wherever the tests are launched from.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -506,7 +507,39 @@ class PanelFormatting(unittest.TestCase):
 class TerminalSingleton(unittest.TestCase):
     """Regression guard for the trap that made the panel report on a BotApp it
     never ran: main.py built its own instance while botstate held another, so
-    status_snapshot() said "stopped" with no quota during a live run."""
+    status_snapshot() said "stopped" with no quota during a live run.
+
+    `get_app()` reads config.yaml, which is gitignored and therefore absent in
+    a fresh clone and in CI. These point it at a temp file and reset the
+    singleton afterwards, so the suite passes anywhere instead of only on a
+    machine that happens to have a config.
+    """
+
+    def setUp(self):
+        import tempfile
+        from ponishabot import botstate, config
+        self.botstate = botstate
+        self._saved_app = botstate._app
+        botstate._app = None                      # force a fresh build
+        self._tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", delete=False, encoding="utf-8")
+        self._tmp.write("bid:\n  dry_run: true\nsearch:\n  skills: []\n")
+        self._tmp.close()
+        # Patching `paths.CONFIG_PATH` would not work: `ConfigLoader.load` takes
+        # `path: str = paths.CONFIG_PATH` as a default argument, and Python
+        # evaluates defaults once at def time. The bound value has to be
+        # replaced on the loader that captured it.
+        self._patch = mock.patch.object(
+            config.ConfigLoader.load, "__defaults__", (self._tmp.name,))
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        self.botstate._app = self._saved_app
+        try:
+            os.unlink(self._tmp.name)
+        except OSError:
+            pass
 
     def test_main_goes_through_get_app(self):
         source = open(os.path.join(ROOT, "main.py"), encoding="utf-8").read()
@@ -515,14 +548,16 @@ class TerminalSingleton(unittest.TestCase):
                          "main.py must not construct its own BotApp")
 
     def test_get_app_is_a_singleton(self):
-        from ponishabot import botstate
-        first = botstate.get_app()
-        self.assertIs(botstate.get_app(), first)
+        first = self.botstate.get_app()
+        self.assertIs(self.botstate.get_app(), first)
 
-    def test_run_terminal_uses_the_same_instance(self):
-        from ponishabot import botstate
-        app = botstate.get_app()
-        self.assertIs(botstate._app, app)
+    def test_the_singleton_is_what_status_reports_on(self):
+        """The bug: a second instance made status_snapshot() describe an app
+        the panel was not running, so it always read `running: False`."""
+        app = self.botstate.get_app()
+        self.assertIs(self.botstate._app, app)
+        snap = self.botstate.status_snapshot()
+        self.assertIn("running", snap)
 
 
 class ConfigDefaults(unittest.TestCase):
