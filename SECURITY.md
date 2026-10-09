@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Open a [private security advisory](https://github.com/p-a-x-e-m/Ponisha/security/advisories/new)
+Open a [private security advisory](https://github.com/p-a-x-e-m/PonishaBot/security/advisories/new)
 on this repository. If you cannot use advisories, open a minimal issue asking for a
 private channel — do not put the details in the issue.
 
