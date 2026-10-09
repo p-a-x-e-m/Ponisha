@@ -447,7 +447,7 @@ class PanelFormatting(unittest.TestCase):
         self.bridge = bridge
 
     def test_money_groups_digits(self):
-        self.assertEqual(self.bridge.fmt_money(7_700_000), "7٬700٬000")
+        self.assertEqual(self.bridge.fmt_money(7_700_000), "7,700,000")
 
     def test_money_handles_unknown(self):
         for v in (None, "", "abc"):
@@ -481,20 +481,25 @@ class PanelFormatting(unittest.TestCase):
     def test_truncate_leaves_a_short_line_alone(self):
         self.assertEqual(self.bridge.truncate_width("کوتاه", 40), "کوتاه")
 
+    def test_money_uses_an_ascii_comma(self):
+        """The interface is English, so the grouping separator is a comma —
+        not the Persian one (U+066C) it used to be."""
+        self.assertNotIn("٬", self.bridge.fmt_money(7_700_000))
+
     def test_status_rows_reflect_the_snapshot(self):
         rows = dict(self.bridge.status_rows({
             "running": True, "quota": 60, "matches": 3, "bids": 11,
             "ai_enabled": True, "has_cookies": True, "refresh_interval": 60,
             "uptime": 3725}))
-        self.assertEqual(rows["وضعیت"], "در حال اجرا")
-        self.assertEqual(rows["سهمیه"], "60")
-        self.assertEqual(rows["متچ"], "3")
-        self.assertEqual(rows["Uptime"], "1h 02m")
+        self.assertEqual(rows["status"], "RUNNING")
+        self.assertEqual(rows["quota"], "60")
+        self.assertEqual(rows["matches"], "3")
+        self.assertEqual(rows["uptime"], "1h 02m")
 
     def test_status_rows_say_bidding_before_running(self):
         """Bidding is the more specific state and must win the label."""
         rows = dict(self.bridge.status_rows({"running": True, "bidding": True}))
-        self.assertEqual(rows["وضعیت"], "در حال ارسال پیشنهاد")
+        self.assertEqual(rows["status"], "BIDDING")
 
 
 class TerminalSingleton(unittest.TestCase):
@@ -608,23 +613,146 @@ class TuiNavigation(unittest.TestCase):
         PonishaTUI.SCREEN_CLASSES = list(ALL_SCREENS)
         return PonishaTUI(self.botstate.get_app())
 
-    def test_tab_cycles_through_every_screen_and_wraps(self):
+    def test_menu_rows_show_their_shortcut_numbers(self):
+        """The menu opened with every number missing.
+
+        `[1]` is valid Rich markup naming an unknown style, and Rich renders
+        nothing at all for it. This checks the rendered text, not the source:
+        an earlier version of this test scanned the file with a regex and
+        passed against the broken code, which is worse than having no test.
+        """
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                from textual.widgets import Static
+                rows = []
+                for w in app.screen.query(Static):
+                    content = getattr(w, "content", None)
+                    if content is None:
+                        continue
+                    try:
+                        from rich.text import Text
+                        rows.append(content.plain if isinstance(content, Text)
+                                    else Text.from_markup(str(content)).plain)
+                    except Exception:
+                        rows.append(str(content))
+                await pilot.press("q")
+                return rows
+
+        rows = self._run(scenario())
+        joined = "\n".join(rows)
+        for i in range(1, 6):
+            self.assertIn(f"[{i}]", joined,
+                          f"menu shortcut [{i}] missing; rendered:\n{joined}")
+
+    def test_log_screen_shows_its_noise_state(self):
+        """`[hidden]` is also unknown markup, and the label vanished the same
+        way. Checks the rendered header rather than the source."""
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(100, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press("5")           # menu -> log
+                await pilot.pause()
+                from textual.widgets import Static
+                w = app.screen.query_one("#log-head", Static)
+                content = getattr(w, "content", "")
+                from rich.text import Text
+                plain = (content.plain if isinstance(content, Text)
+                         else Text.from_markup(str(content)).plain)
+                await pilot.press("q")
+                return plain
+
+        header = self._run(scenario())
+        self.assertIn("hidden", header, f"noise state missing: {header!r}")
+        self.assertIn("level", header)
+
+    def test_menu_is_the_landing_screen(self):
+        """The app opens on the menu, not straight into the dashboard."""
         async def scenario():
             app = self._build()
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
+                name = type(app.screen).__name__
+                await pilot.press("q")
+                return name
+
+        self.assertEqual(self._run(scenario()), "MenuScreen")
+
+    def test_menu_opens_each_screen_by_number(self):
+        """1-5 jump straight to a screen. Unlike app-level bindings, these work
+        because the menu has no text field to swallow the digit."""
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                reached = {}
+                for key, expected in [("1", "DashboardScreen"), ("2", "ProjectsScreen"),
+                                      ("3", "SettingsScreen"), ("4", "LoginScreen"),
+                                      ("5", "LogScreen")]:
+                    await pilot.press(key)
+                    await pilot.pause()
+                    reached[key] = type(app.screen).__name__
+                    await pilot.press("escape")      # back to the menu
+                    await pilot.pause()
+                await pilot.press("q")
+                return reached
+
+        reached = self._run(scenario())
+        for key, expected in [("1", "DashboardScreen"), ("2", "ProjectsScreen"),
+                              ("3", "SettingsScreen"), ("4", "LoginScreen"),
+                              ("5", "LogScreen")]:
+            self.assertEqual(reached[key], expected, f"key {key}")
+
+    def test_menu_enter_opens_the_highlighted_item(self):
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("j")               # highlight Projects
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                name = type(app.screen).__name__
+                await pilot.press("q")
+                return name
+
+        self.assertEqual(self._run(scenario()), "ProjectsScreen")
+
+    def test_monitor_does_not_start_on_its_own(self):
+        """Launching the app must not begin bidding before the operator has
+        looked at anything: with dry_run off, that used to fire immediately."""
+        async def scenario():
+            app = self._build()
+            started = []
+            app.start_monitor = lambda: started.append(1)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("q")
+                return started
+
+        self.assertEqual(self._run(scenario()), [],
+                         "on_mount must not start the monitor")
+
+    def test_tab_cycles_through_every_screen_and_wraps(self):
+        async def scenario():
+            app = self._build()
+            from ponishabot.tui.screens import ALL_SCREENS
+            count = len(ALL_SCREENS)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
                 seen = []
-                for _ in range(5):
+                for _ in range(count):
                     seen.append(type(app.screen).__name__)
                     await pilot.press("tab")
                     await pilot.pause()
-                # back to the start after a full cycle
                 wrapped = type(app.screen).__name__
                 await pilot.press("q")
-                return seen, wrapped
+                return seen, wrapped, count
 
-        seen, wrapped = self._run(scenario())
-        self.assertEqual(len(set(seen)), 5, f"screens not distinct: {seen}")
+        seen, wrapped, count = self._run(scenario())
+        self.assertEqual(len(set(seen)), count, f"screens not distinct: {seen}")
         self.assertEqual(wrapped, seen[0], "Tab did not wrap around")
 
     def test_shift_tab_goes_backwards(self):
@@ -650,7 +778,7 @@ class TuiNavigation(unittest.TestCase):
             app = self._build()
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
-                await pilot.press("tab")          # -> projects
+                await pilot.press("2")            # menu -> projects
                 await pilot.pause()
                 from textual.widgets import DataTable
                 table = app.screen.query_one(DataTable)

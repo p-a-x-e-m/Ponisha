@@ -1,13 +1,18 @@
-"""The Textual application: screens, navigation and the shared bot binding.
+"""The Textual application: menu, screens, navigation and the shared bot binding.
 
 `PonishaTUI` is a thin shell over the process-wide `BotApp`. It never builds its
 own instance — `botstate.get_app()` is the only source, the same route the web
 dashboard uses, because a second instance would carry its own Selenium driver
 while the screens reported on the first.
 
-Key handling is declarative (`BINDINGS`), which is what makes this a TUI rather
-than a panel that happens to redraw: Textual routes the keys, tracks focus, and
-gives each screen its own bindings without any dispatch code here.
+The interface is English. The web dashboard is Persian because it is read by a
+person browsing; this is read inside a terminal grid, where Persian is genuinely
+fragile — the glyphs join, so the space a string occupies on screen does not
+match its length, and columns stop lining up. Data coming from ponisha (badges,
+error strings) stays Persian because it has to match the site.
+
+Key handling is declarative (`BINDINGS`): Textual routes keys and tracks focus,
+so there is no dispatch code here.
 """
 
 from __future__ import annotations
@@ -17,9 +22,9 @@ import threading
 import time
 from typing import Optional
 
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.binding import Binding
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Static
 
 from ponishabot.tui import bridge
 
@@ -30,51 +35,131 @@ class PonishaTUI(App):
     """Multi-screen terminal UI for ponishabot."""
 
     TITLE = "ponishabot"
-    SUB_TITLE = "monitor for ponisha.ir"
+    SUB_TITLE = "ponisha.ir monitor"
 
+    # Palette taken from dashboard/static/dashboard/css/app.css so the terminal
+    # and the web UI read as one product. The four surface levels are what give
+    # the interface depth: cards sit on SURFACE_2 above a SURFACE_1 chrome,
+    # with the page itself on BG.
     CSS = f"""
-    Screen {{ background: #060809; }}
-    Header {{ background: #0b0e11; color: {bridge.FG}; }}
-    Footer {{ background: #0b0e11; color: {bridge.MUTED}; }}
-    Footer > .footer--key {{ background: {bridge.ACCENT}; color: #060809; }}
+    Screen {{
+        background: {bridge.BG};
+        color: {bridge.FG};
+    }}
+
+    Header {{
+        background: {bridge.SURFACE_1};
+        color: {bridge.ACCENT};
+        text-style: bold;
+    }}
+    Header .header--title {{ color: {bridge.ACCENT}; }}
+    Header .header--subtitle {{ color: {bridge.MUTED_2}; }}
+
+    Footer {{
+        background: {bridge.SURFACE_1};
+        color: {bridge.MUTED};
+    }}
+    Footer > .footer--key {{
+        background: {bridge.ACCENT};
+        color: {bridge.BG};
+        text-style: bold;
+    }}
+    Footer > .footer--description {{ color: {bridge.MUTED_2}; }}
+
     .muted {{ color: {bridge.MUTED}; }}
+    .dim {{ color: {bridge.MUTED_2}; }}
     .accent {{ color: {bridge.ACCENT}; }}
     .ok {{ color: {bridge.OK}; }}
     .danger {{ color: {bridge.DANGER}; }}
+    .info {{ color: {bridge.INFO}; }}
+
     .card {{
-        border: round {bridge.BORDER};
-        background: #0b0e11;
-        padding: 0 1;
+        border: round {bridge.BORDER_STRONG};
+        background: {bridge.SURFACE_2};
+        padding: 1 2;
+        margin: 0 1;
+        height: auto;
+    }}
+    .card-title {{
+        color: {bridge.MUTED_2};
+        text-style: bold;
+        padding: 0 0 1 0;
+    }}
+
+    /* The landing menu: centred and given room to breathe. */
+    #menu {{ align: center middle; }}
+    #menu-box {{
+        border: round {bridge.ACCENT};
+        background: {bridge.SURFACE_1};
+        padding: 1 3;
+        width: 58;
+        height: auto;
+    }}
+    #menu-title {{
+        color: {bridge.ACCENT};
+        text-style: bold;
+        padding: 0 0 1 0;
+    }}
+    #menu-sub {{ color: {bridge.MUTED_2}; padding: 0 0 1 0; }}
+    .menu-item {{ color: {bridge.FG}; padding: 0 0 0 1; }}
+    .menu-item-selected {{
+        color: {bridge.BG};
+        background: {bridge.ACCENT};
+        text-style: bold;
+        padding: 0 0 0 1;
+    }}
+    #menu-hint {{ color: {bridge.MUTED_2}; padding: 1 0 0 0; }}
+
+    DataTable {{
+        background: {bridge.SURFACE_2};
+        border: round {bridge.BORDER_STRONG};
         margin: 0 1;
     }}
-    DataTable {{ background: #0b0e11; }}
-    DataTable > .datatable--cursor {{ background: {bridge.ACCENT}; color: #060809; }}
-    Input, Select {{ background: #0b0e11; border: tall {bridge.BORDER}; }}
+    DataTable > .datatable--header {{
+        background: {bridge.SURFACE_3};
+        color: {bridge.MUTED_2};
+        text-style: bold;
+    }}
+    DataTable > .datatable--cursor {{
+        background: {bridge.ACCENT};
+        color: {bridge.BG};
+        text-style: bold;
+    }}
+    DataTable > .datatable--hover {{ background: {bridge.SURFACE_3}; }}
+
+    Input, Select {{
+        background: {bridge.SURFACE_2};
+        border: tall {bridge.BORDER_STRONG};
+        color: {bridge.FG};
+    }}
     Input:focus, Select:focus {{ border: tall {bridge.ACCENT}; }}
+    Input > .input--placeholder {{ color: {bridge.MUTED_2}; }}
+
+    Switch:focus {{ border: tall {bridge.ACCENT}; }}
+    Button {{ background: {bridge.SURFACE_3}; color: {bridge.FG}; }}
+    Button.-primary {{ background: {bridge.ACCENT}; color: {bridge.BG}; }}
+
+    VerticalScroll {{ background: {bridge.BG}; }}
+    #notice {{ color: {bridge.MUTED}; padding: 0 2; height: auto; }}
     """
 
-    # Navigation is on Tab/Shift+Tab and the arrow keys plus hjkl, per the
-    # documented behaviour. Screens add their own bindings on top.
+    # Tab and Shift+Tab are the only way between screens. No single-key screen
+    # shortcuts: a digit bound at the app level is swallowed by any focused
+    # Input before it arrives, so the shortcut would work on the dashboard and
+    # silently fail on the login screen — the one screen where typing a number
+    # is the whole point. The menu instead binds digits itself, where there is
+    # no text field to compete with.
     BINDINGS = [
-        Binding("q", "quit", "خروج", priority=True),
-        Binding("ctrl+c", "quit", "خروج", show=False, priority=True),
-        Binding("tab", "next_screen", "صفحه بعد", priority=True),
-        Binding("shift+tab", "prev_screen", "صفحه قبل", priority=True),
-        # Written without the `self.` prefix so Textual passes the argument
-        # through; as an unbound name it looks for a method literally called
-        # `goto(0)` and silently falls back to the first binding.
-        # No single-key screen shortcuts on purpose. A digit bound at the app
-        # level is swallowed by any focused Input before it arrives, so the
-        # shortcut would work on the dashboard and silently fail on the login
-        # screen — the one screen where typing a number is the whole point.
-        # Tab and Shift+Tab always reach the app, so they are the only way
-        # between screens.
-        Binding("escape", "back", "برگشت", priority=True),
-        Binding("r", "refresh_status", "بازخوانی", show=False),
+        Binding("q", "quit", "quit", priority=True),
+        Binding("ctrl+c", "quit", "quit", show=False, priority=True),
+        Binding("tab", "next_screen", "next", priority=True),
+        Binding("shift+tab", "prev_screen", "prev", priority=True),
+        Binding("escape", "back", "back", priority=True),
+        Binding("r", "refresh_status", "refresh", show=False),
+        Binding("m", "menu", "menu", show=False),
     ]
 
-    # Screen order drives Tab and the number keys.
-    SCREEN_CLASSES: list = []          # filled after the screens are imported
+    SCREEN_CLASSES: list = []          # filled by the entry point
 
     def __init__(self, app, level: str = "important"):
         super().__init__()
@@ -97,10 +182,10 @@ class PonishaTUI(App):
         self.set_interval(1.0, self._tick)
         self.set_interval(0.4, self._read_log)
 
-        # The monitor runs off the main thread, as it does for the dashboard.
-        if not self.bot.is_running():
-            self._notice("در حال شروع مانیتور…")
-            self.start_monitor()
+        # Deliberately NOT starting the monitor. With dry_run off, launching
+        # `main.py` used to begin bidding immediately, before the operator had
+        # seen the settings or signed in. Starting is now an explicit choice
+        # from the dashboard (`s`) or the menu.
 
     def on_unmount(self) -> None:
         # Leave the bot in a known state rather than a half-open Chrome.
@@ -117,7 +202,7 @@ class PonishaTUI(App):
                 self.bot.start(interactive=False)
             except Exception as e:
                 logger.error(f"start failed: {type(e).__name__}: {e}")
-                self.call_from_thread(self._notice, f"شروع نشد: {e}")
+                self.call_from_thread(self.notify, f"start failed: {e}")
         threading.Thread(target=worker, daemon=True, name="tui-start").start()
 
     def stop_monitor(self) -> None:
@@ -156,13 +241,18 @@ class PonishaTUI(App):
             self._log_buf.clear()
 
     # ── notice ──
-    def _notice(self, message: str) -> None:
-        """Show a transient line in the status bar area."""
+    def notify(self, message: str, kind: str = "accent") -> None:
+        """Show a transient line under the active screen."""
+        colour = {"ok": bridge.OK, "err": bridge.DANGER,
+                  "info": bridge.INFO}.get(kind, bridge.ACCENT)
         try:
-            bar = self.query_one("#notice", Static)
-            bar.update(f"[{bridge.ACCENT}]{message}[/]")
+            self.screen.query_one("#notice", Static).update(
+                f"[{colour}]{message}[/]")
         except Exception:
             pass
+
+    # Kept as an alias: the screens call `tui._notice(...)`.
+    _notice = notify
 
     # ── intervals ──
     def _tick(self) -> None:
@@ -218,8 +308,12 @@ class PonishaTUI(App):
         i = self.current_index()
         self.push_screen(names[(i + step) % len(names)])
 
+    def action_menu(self) -> None:
+        """`m`: back to the landing menu from anywhere."""
+        self.push_screen(self._installed_classes[0].SCREEN_NAME)
+
     def action_back(self) -> None:
-        """Esc: leave a modal/edit, else go back to the dashboard."""
+        """Esc: leave a modal/edit, else return to the menu."""
         if len(self.screen_stack) > 2:
             self.pop_screen()
             return
@@ -228,4 +322,4 @@ class PonishaTUI(App):
 
     def action_refresh_status(self) -> None:
         self._tick()
-        self._notice("بازخوانی شد")
+        self.notify("refreshed", "info")

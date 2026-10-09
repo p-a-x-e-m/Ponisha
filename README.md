@@ -136,8 +136,8 @@ CI روی هر push و PR اجرا می‌شود ([.github/workflows/tests.yml](
 
 ```bash
 python manage.py bot                # رابط وب → http://127.0.0.1:8000/
-python main.py                      # پنل ترمینال تعاملی
-python main.py --plain              # فقط لاگ، بدون پنل
+python main.py                      # رابط کاربری متنی تعاملی
+python main.py --plain              # فقط لاگ، بدون TUI
 python manage.py bot_login          # باز کردن کروم برای لاگین دستی
 ```
 
@@ -146,41 +146,54 @@ python manage.py bot_login          # باز کردن کروم برای لاگی
 همان کاری را می‌کند که داشبورد می‌کند، بدون باز کردن مرورگر: وضعیت زنده،
 پروژه‌ها، **همهٔ تنظیمات**، و **ورود** — همه داخل ترمینال.
 
+با یک **منو** شروع می‌شود و **مانیتور خودکار شروع نمی‌شود**؛ خودت انتخاب می‌کنی.
+
 ```
-┌─ ponishabot ─────────────────────────────[ DRY_RUN ]─┐
-│ ● در حال اجرا          سهمیه ۶۰  ·  متچ ۳  ·  بید ۱۱ │
-│ AI فعال · فاصله ۶۰s · جلسه معتبر   Uptime 1h 02m     │
-├──────────────────────────────────────────────────────┤
-│ آخرین پیشنهادها                                       │
-│ ۷٬۷۰۰٬۰۰۰  ربات تلگرام فروشگاه · ۱۵ روز              │
-├──────────────────────────────────────────────────────┤
-│ لاگ                                                  │
-│ 16:32 AI: bid 7,700,000 Toman — matched              │
-│ 16:32 Rejected: طراحی لوگو (overlap 20% < 50%)       │
-└──────────────────────────────────────────────────────┘
- Tab صفحه بعد · ↑↓ حرکت · Enter تأیید · Esc برگشت · q خروج
+ ┌──────────────────────────────────────────────┐
+ │  ponishabot                                  │
+ │  ponisha.ir monitor                          │
+ │                                              │
+ │  ▸ [1]  Dashboard   live status and controls │
+ │    [2]  Projects    scanned listings         │
+ │    [3]  Settings    bot configuration        │
+ │    [4]  Login       sign in to ponisha       │
+ │    [5]  Log         live output              │
+ │                                              │
+ │    [q]  quit                                 │
+ │                                              │
+ │  arrows move · Enter opens · or the number   │
+ └──────────────────────────────────────────────┘
 ```
+
+> **رابط انگلیسی است.** داشبورد وب فارسی است چون کسی آن را در مرورگر
+> می‌خواند؛ این را در grid ترمینال می‌خوانی، جایی که فارسی واقعاً شکننده
+> است — حروف به هم می‌چسبند و عرض رشته با طولش یکی نیست، پس ستون‌ها از
+> تراز درمی‌آیند. داده‌ای که از پونی‌شا می‌آید (بج‌هایی مثل «فوری»، پیام‌های
+> خطای خود سایت) فارسی می‌ماند چون باید با سایت تطبیق کند.
 
 #### صفحه‌ها
 
-`Tab` و `Shift+Tab` بین این پنج صفحه می‌چرخند:
+`Tab` و `Shift+Tab` بین این شش صفحه می‌چرخند:
 
 | صفحه | چه‌کار می‌کند |
 |---|---|
-| **داشبورد** | وضعیت زنده، آخرین پیشنهادها، شروع/توقف |
-| **پروژه‌ها** | جدول پروژه‌های اسکن‌شده؛ `Enter` جزئیات تصمیم، `/` جست‌وجو، `b` ارسال پیشنهاد |
-| **تنظیمات** | همهٔ تنظیمات؛ `Tab` بین فیلدها، `Ctrl+S` ذخیره، `Esc` لغو |
-| **ورود** | شمارهٔ موبایل → کد پیامک، یا `o` برای ورود با مرورگر |
-| **لاگ** | لاگ زنده؛ `f` سطح، `n` نویز، `c` پاک‌کردن |
+| **Menu** | انتخاب صفحه با `1`..`5` یا `↑↓` + `Enter` |
+| **Dashboard** | وضعیت زنده، آخرین پیشنهادها، شروع/توقف |
+| **Projects** | جدول پروژه‌های اسکن‌شده؛ `Enter` جزئیات تصمیم، `/` جست‌وجو، `b` ارسال پیشنهاد |
+| **Settings** | همهٔ تنظیمات؛ `Tab` بین فیلدها، `Ctrl+S` ذخیره، `Esc` لغو |
+| **Login** | شمارهٔ موبایل → کد پیامک، یا `o` برای ورود با مرورگر |
+| **Log** | لاگ زنده؛ `f` سطح، `n` نویز، `c` پاک‌کردن |
 
 #### کلیدها
 
 | کلید | کار |
 |---|---|
+| `1`..`5` | (در منو) رفتن مستقیم به صفحه |
 | `Tab` / `Shift+Tab` | صفحهٔ بعد / قبل |
 | `↑` `↓` یا `k` `j` | حرکت در فهرست‌ها |
 | `Enter` | تأیید / جزئیات / ویرایش |
-| `Esc` | برگشت / لغو ویرایش |
+| `Esc` | برگشت به منو / لغو ویرایش |
+| `m` | برگشت به منو از هر جا |
 | `q` | خروج (درایور کروم بسته می‌شود) |
 
 کلیدهای داخل هر صفحه:
@@ -823,8 +836,8 @@ CI runs on every push and pull request
 
 ```bash
 python manage.py bot                # web dashboard → http://127.0.0.1:8000/
-python main.py                      # interactive terminal panel
-python main.py --plain              # logs only, no panel
+python main.py                      # interactive terminal UI
+python main.py --plain              # logs only, no TUI
 python manage.py bot_login          # open Chrome for a manual login
 ```
 
@@ -833,27 +846,40 @@ python manage.py bot_login          # open Chrome for a manual login
 Does what the dashboard does, without opening a browser: live status, projects,
 **every setting**, and **login** — all inside the terminal.
 
+It opens on a **menu**, and the **monitor does not start on its own** — you pick
+each step.
+
 ```
-┌─ ponishabot ─────────────────────────────[ DRY_RUN ]─┐
-│ ● RUNNING           quota 60  ·  matches 3  ·  bids 11│
-│ AI on · every 60s · session valid   uptime 1h 02m     │
-├───────────────────────────────────────────────────────┤
-│ latest proposals                                       │
-│ 7,700,000  Telegram bot for a shop · 15 days           │
-├───────────────────────────────────────────────────────┤
-│ log                                                    │
-│ 16:32 AI: bid 7,700,000 Toman — matched                │
-│ 16:32 Rejected: logo design (overlap 20% < 50%)        │
-└───────────────────────────────────────────────────────┘
- Tab next · ↑↓ move · Enter confirm · Esc back · q quit
+ ┌──────────────────────────────────────────────┐
+ │  ponishabot                                  │
+ │  ponisha.ir monitor                          │
+ │                                              │
+ │  ▸ [1]  Dashboard   live status and controls │
+ │    [2]  Projects    scanned listings         │
+ │    [3]  Settings    bot configuration        │
+ │    [4]  Login       sign in to ponisha       │
+ │    [5]  Log         live output              │
+ │                                              │
+ │    [q]  quit                                 │
+ │                                              │
+ │  arrows move · Enter opens · or the number   │
+ └──────────────────────────────────────────────┘
 ```
+
+> **The interface is English.** The web dashboard is Persian because it is read
+> in a browser; this is read inside a terminal grid, where Persian is genuinely
+> fragile — the glyphs join, so the space a string occupies on screen does not
+> match its length and columns stop lining up. Data from ponisha (badges like
+> «فوری», the site's own error strings) stays Persian because it has to match
+> the site.
 
 #### Screens
 
-`Tab` and `Shift+Tab` cycle through these five:
+`Tab` and `Shift+Tab` cycle through these six:
 
 | Screen | What it does |
 |---|---|
+| **Menu** | pick a screen with `1`..`5`, or `↑↓` + `Enter` |
 | **Dashboard** | live status, recent proposals, start/stop |
 | **Projects** | table of scanned projects; `Enter` shows the decision, `/` searches, `b` bids |
 | **Settings** | every setting; `Tab` between fields, `Ctrl+S` saves, `Esc` reverts |
@@ -864,10 +890,12 @@ Does what the dashboard does, without opening a browser: live status, projects,
 
 | Key | Action |
 |---|---|
+| `1`..`5` | (on the menu) jump straight to a screen |
 | `Tab` / `Shift+Tab` | next / previous screen |
 | `↑` `↓` or `k` `j` | move through lists |
 | `Enter` | confirm / details / edit |
-| `Esc` | back / cancel an edit |
+| `Esc` | back to the menu / cancel an edit |
+| `m` | return to the menu from anywhere |
 | `q` | quit (closes the Chrome driver) |
 
 Per screen:

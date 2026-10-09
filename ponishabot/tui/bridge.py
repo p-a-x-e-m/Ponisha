@@ -16,14 +16,24 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 # ── Palette, taken from dashboard/static/dashboard/css/app.css so the terminal
-# and the web dashboard read as one product rather than two.
-ACCENT = "#f5a524"   # --accent
-OK = "#3ddc84"       # --ok
-DANGER = "#ff5c5c"   # --danger
-INFO = "#4cc2ff"     # --info
-MUTED = "#9aa3ad"    # --muted
-FG = "#e8eaed"       # --fg
-BORDER = "#2a3138"   # --border-strong
+# and the web dashboard read as one product rather than two. The three surface
+# levels are what give the TUI depth: cards sit on SURFACE_2 above SURFACE_1
+# chrome, with the page itself on BG.
+BG = "#060809"          # --bg
+SURFACE_1 = "#0b0e11"   # --surface
+SURFACE_2 = "#101418"   # --surface-2
+SURFACE_3 = "#161b20"   # --surface-3
+ACCENT = "#f5a524"      # --accent
+ACCENT_HOVER = "#d98c12"  # --accent-hover
+OK = "#3ddc84"          # --ok
+DANGER = "#ff5c5c"      # --danger
+INFO = "#4cc2ff"        # --info
+FG = "#e8eaed"          # --fg
+MUTED = "#9aa3ad"       # --muted
+MUTED_2 = "#7d8794"     # --muted-2
+HEADING = "#e8eaed"     # --heading
+BORDER = "#1c2126"      # --border
+BORDER_STRONG = "#2a3138"  # --border-strong
 
 # Log lines that are expected during normal operation. Hidden by default.
 NOISE_PATTERNS = (
@@ -174,11 +184,16 @@ def filter_lines(lines: Sequence[str], level: str = "important",
 # ──────────────────────────────────────────────────────────────────────────
 
 def fmt_money(value) -> str:
-    """Group digits with a thin separator, or an em dash when unknown."""
+    """Group digits with a comma, or an em dash when unknown.
+
+    A plain comma, not the Persian thousands separator (U+066C): the interface
+    is English, and every browser, editor and terminal already renders the
+    ASCII comma correctly.
+    """
     if value is None:
         return "—"
     try:
-        return f"{int(value):,}".replace(",", "٬")
+        return f"{int(value):,}"
     except (TypeError, ValueError):
         return "—"
 
@@ -229,20 +244,20 @@ def status_rows(snap: Dict) -> List[Tuple[str, str]]:
     """Turn a status snapshot into (label, value) rows for display."""
     running = bool(snap.get("running"))
     if snap.get("bidding"):
-        state = "در حال ارسال پیشنهاد"
+        state = "BIDDING"
     elif running:
-        state = "در حال اجرا"
+        state = "RUNNING"
     else:
-        state = "متوقف"
+        state = "STOPPED"
     return [
-        ("وضعیت", state),
-        ("سهمیه", fmt_quota(snap.get("quota"))),
-        ("متچ", str(snap.get("matches", 0))),
-        ("بید", str(snap.get("bids", 0))),
-        ("Uptime", fmt_duration(snap.get("uptime"))),
-        ("AI", "فعال" if snap.get("ai_enabled") else "خاموش"),
-        ("فاصله", f"{snap.get('refresh_interval', '?')}s"),
-        ("جلسه", "معتبر" if snap.get("has_cookies") else "نامعتبر"),
+        ("status", state),
+        ("quota", fmt_quota(snap.get("quota"))),
+        ("matches", str(snap.get("matches", 0))),
+        ("bids", str(snap.get("bids", 0))),
+        ("uptime", fmt_duration(snap.get("uptime"))),
+        ("ai", "on" if snap.get("ai_enabled") else "off"),
+        ("poll", f"{snap.get('refresh_interval', '?')}s"),
+        ("session", "valid" if snap.get("has_cookies") else "invalid"),
     ]
 
 
@@ -305,9 +320,9 @@ def validate_setting(key: str, raw):
         try:
             num = float(raw)
         except (TypeError, ValueError):
-            raise InvalidSetting(f"{key}: عدد لازم است")
+            raise InvalidSetting(f"{key}: a number is required")
         if num != num or num in (float("inf"), float("-inf")):
-            raise InvalidSetting(f"{key}: عدد نامعتبر")
+            raise InvalidSetting(f"{key}: not a valid number")
         lo, hi = _NUMERIC_RANGES.get(key, (0.0, 1.0))
         if lo is not None and num < lo:
             num = lo

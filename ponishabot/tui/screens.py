@@ -1,23 +1,24 @@
-"""The screens: dashboard, projects, settings, login, log.
+"""The screens: menu, dashboard, projects, settings, login, log.
 
 Each screen owns its widgets and its own key bindings. Navigation (Tab, arrows,
 hjkl, Enter, Esc) is declared per screen and routed by Textual, so there is no
-key-dispatch code to maintain — that is the difference between this and a panel
-that merely redraws.
+key-dispatch code to maintain.
+
+The interface is English. Data from ponisha stays as the site sends it — badges
+like «فوری» and the API's own error strings are matched, not displayed as
+literals we chose.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-import time
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Center, Horizontal, Middle, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import (Button, DataTable, Footer, Input, Label, Select,
-                             Static, Switch)
+from textual.widgets import Button, DataTable, Input, Label, Static, Switch
 
 from ponishabot.tui import bridge
 
@@ -25,17 +26,17 @@ logger = logging.getLogger(__name__)
 
 
 class BaseScreen(Screen):
-    """Shared chrome and the vim-style movement keys every list screen gets."""
+    """Shared chrome and the movement keys every list screen gets."""
 
     SCREEN_NAME = "base"
-    NAV = "داشبورد"
+    NAV = "Base"
 
     BINDINGS = [
         # hjkl alongside the arrow keys, as the README describes.
-        Binding("j", "cursor_down", "پایین", show=False),
-        Binding("k", "cursor_up", "بالا", show=False),
-        Binding("down", "cursor_down", "پایین", show=False),
-        Binding("up", "cursor_up", "بالا", show=False),
+        Binding("j", "cursor_down", "down", show=False),
+        Binding("k", "cursor_up", "up", show=False),
+        Binding("down", "cursor_down", "down", show=False),
+        Binding("up", "cursor_up", "up", show=False),
     ]
 
     def __init__(self, tui) -> None:
@@ -51,28 +52,148 @@ class BaseScreen(Screen):
         pass
 
 
-class DashboardScreen(BaseScreen):
-    """Live state, the controls, and the last few proposals."""
+class MenuScreen(BaseScreen):
+    """The landing screen. Pick a screen by number, or with arrows and Enter.
 
-    SCREEN_NAME = "dashboard"
-    NAV = "داشبورد"
+    Nothing starts on its own here. With dry_run off, launching `main.py` used
+    to begin bidding before the operator had looked at anything; choosing each
+    step explicitly is the point of this screen.
+    """
+
+    SCREEN_NAME = "menu"
+    NAV = "Menu"
 
     BINDINGS = BaseScreen.BINDINGS + [
-        Binding("s", "toggle_run", "شروع/توقف"),
+        Binding("1", "open(0)", "Dashboard", show=False, priority=True),
+        Binding("2", "open(1)", "Projects", show=False, priority=True),
+        Binding("3", "open(2)", "Settings", show=False, priority=True),
+        Binding("4", "open(3)", "Login", show=False, priority=True),
+        Binding("5", "open(4)", "Log", show=False, priority=True),
+        Binding("enter", "select", "open"),
+    ]
+
+    ITEMS = [
+        ("Dashboard", "live status and controls"),
+        ("Projects", "scanned listings"),
+        ("Settings", "bot configuration"),
+        ("Login", "sign in to ponisha"),
+        ("Log", "live output"),
+    ]
+
+    def __init__(self, tui) -> None:
+        super().__init__(tui)
+        # Set here, not in on_mount: compose() runs before on_mount, and it
+        # reads the cursor to decide which row to highlight.
+        self._cursor = 0
+
+    def compose(self) -> ComposeResult:
+        with Center(), Middle():
+            with Vertical(id="menu-box"):
+                yield Static("ponishabot", id="menu-title")
+                yield Static("ponisha.ir monitor", id="menu-sub")
+                for i, (name, desc) in enumerate(self.ITEMS, start=1):
+                    yield Static(self._row(i, name, desc, i - 1 == self._cursor),
+                                 classes="menu-item", id=f"menu-{i}")
+                # Built as Text: a bare `[q]` is markup for an unknown style,
+                # and Rich renders nothing for it.
+                from rich.text import Text as _Text
+                quit_row = _Text()
+                quit_row.append("  ", style=bridge.MUTED)
+                quit_row.append("[q]", style=bridge.ACCENT)
+                quit_row.append("  quit", style=bridge.MUTED)
+                yield Static(quit_row, classes="menu-item")
+                yield Static("arrows move · Enter opens · or press the number",
+                             id="menu-hint")
+
+    def on_mount(self) -> None:
+        self._redraw()
+
+    def _row(self, i: int, name: str, desc: str, selected: bool):
+        """Build one menu row as a `Text`, not markup.
+
+        `[1]` is valid Rich markup naming an unknown style, and Rich renders
+        nothing at all for it — the menu opened with every shortcut number
+        missing. Backslash-escaping does not help either: markup only
+        unescapes `\\\\[`, so `\\[1\\]` came out literally as `[1\\]`. Building
+        the row from styled spans sidesteps markup entirely.
+        """
+        from rich.text import Text
+
+        row = Text()
+        if selected:
+            row.append("▸ ", style=f"bold {bridge.BG} on {bridge.ACCENT}")
+            row.append(f"[{i}]", style=f"bold {bridge.BG} on {bridge.ACCENT}")
+            row.append(f"  {name:<10} ", style=f"bold {bridge.BG} on {bridge.ACCENT}")
+            row.append(desc, style=f"{bridge.BG} on {bridge.ACCENT}")
+        else:
+            row.append("  ", style=bridge.MUTED)
+            row.append(f"[{i}]", style=bridge.ACCENT)
+            row.append(f"  {name:<10} ", style=bridge.FG)
+            row.append(desc, style=bridge.MUTED_2)
+        return row
+
+    def _redraw(self) -> None:
+        for i, (name, desc) in enumerate(self.ITEMS, start=1):
+            try:
+                self.query_one(f"#menu-{i}", Static).update(
+                    self._row(i, name, desc, i - 1 == self._cursor))
+            except Exception:
+                pass
+
+    def refresh_status(self) -> None:
+        self._redraw()
+
+    # ── movement ──
+    def action_cursor_down(self) -> None:
+        self._cursor = min(self._cursor + 1, len(self.ITEMS) - 1)
+        self._redraw()
+
+    def action_cursor_up(self) -> None:
+        self._cursor = max(self._cursor - 1, 0)
+        self._redraw()
+
+    def action_select(self) -> None:
+        """Enter opens the highlighted item."""
+        self._open(self._cursor)
+
+    def action_open(self, index) -> None:
+        """Number key: Textual passes binding arguments through as text."""
+        try:
+            i = int(index)
+        except (TypeError, ValueError):
+            return
+        self._open(i)
+
+    def _open(self, index: int) -> None:
+        classes = self.tui._installed_classes
+        # +1 skips the menu itself, which is first in the installed order.
+        target = index + 1
+        if 0 <= index < len(self.ITEMS) and target < len(classes):
+            self.app.push_screen(classes[target].SCREEN_NAME)
+
+
+class DashboardScreen(BaseScreen):
+    """Live state and the controls that change it."""
+
+    SCREEN_NAME = "dashboard"
+    NAV = "Dashboard"
+
+    BINDINGS = BaseScreen.BINDINGS + [
+        Binding("s", "toggle_run", "start/stop"),
         Binding("d", "toggle_dry_run", "dry-run"),
-        Binding("l", "login", "ورود", show=False),
+        Binding("l", "login", "login", show=False),
     ]
 
     def compose(self) -> ComposeResult:
         yield Horizontal(Static("", id="status-card", classes="card"),
                          Static("", id="meta-card", classes="card"))
-        yield Static("آخرین پیشنهادها", classes="muted")
+        yield Static("Recent proposals", classes="card-title")
         yield DataTable(id="recent")
         yield Static("", id="notice")
 
     def on_mount(self) -> None:
         table = self.query_one("#recent", DataTable)
-        table.add_columns("قیمت", "عنوان", "مدت")
+        table.add_columns("price", "title", "days")
         table.cursor_type = "row"
         self.refresh_status()
 
@@ -80,29 +201,30 @@ class DashboardScreen(BaseScreen):
         snap = self.tui.snapshot()
         rows = dict(bridge.status_rows(snap))
 
-        state = rows.get("وضعیت", "?")
-        colour = bridge.OK if snap.get("running") else bridge.MUTED
+        state = rows.get("status", "?")
+        colour = {"RUNNING": bridge.OK, "BIDDING": bridge.INFO}.get(
+            state, bridge.MUTED)
         self.query_one("#status-card", Static).update(
             f"[b {colour}]{state}[/]\n"
-            f"سهمیه [{bridge.ACCENT}]{rows.get('سهمیه')}[/]   "
-            f"متچ {rows.get('متچ')}   بید {rows.get('بید')}")
+            f"quota [{bridge.ACCENT}]{rows.get('quota')}[/]   "
+            f"matches {rows.get('matches')}   bids {rows.get('bids')}")
 
+        dry = snap.get("dry_run")
         self.query_one("#meta-card", Static).update(
-            f"Uptime {rows.get('Uptime')}\n"
-            f"AI {rows.get('AI')}   فاصله {rows.get('فاصله')}   "
-            f"جلسه {rows.get('جلسه')}\n"
-            f"dry-run "
-            f"[{bridge.DANGER if snap.get('dry_run') else bridge.MUTED}]"
-            f"{'روشن' if snap.get('dry_run') else 'خاموش'}[/]")
+            f"uptime {rows.get('uptime')}\n"
+            f"ai {rows.get('ai')}   poll {rows.get('poll')}   "
+            f"session {rows.get('session')}\n"
+            f"dry-run [{bridge.DANGER if dry else bridge.MUTED}]"
+            f"{'on' if dry else 'off'}[/]")
 
         table = self.query_one("#recent", DataTable)
         wanted = self.tui.recent_projects()[:20]
         if table.row_count != len(wanted):
             table.clear()
             for p in wanted:
-                dur = f"{p.get('suggested_days')} روز" if p.get("suggested_days") else "—"
+                days = str(p.get("suggested_days") or "—")
                 table.add_row(bridge.fmt_money(p.get("price")),
-                              str(p.get("title", ""))[:48], dur)
+                              str(p.get("title", ""))[:48], days)
 
     # ── actions ──
     def action_cursor_down(self) -> None:
@@ -113,54 +235,54 @@ class DashboardScreen(BaseScreen):
 
     def action_toggle_run(self) -> None:
         if self.bot.is_running():
-            self.tui._notice("در حال توقف…")
+            self.tui.notify("stopping…", "info")
             self.tui.stop_monitor()
         else:
             if self.bot.monitor is None:
-                self.tui._notice("ابتدا از صفحهٔ ورود، وارد شوید")
+                self.tui.notify("not signed in — open Login first", "err")
                 return
-            self.tui._notice("در حال شروع…")
+            self.tui.notify("starting…", "ok")
             self.tui.start_monitor()
 
     def action_toggle_dry_run(self) -> None:
         new = not self.bot.cfg.dry_run
         self.bot.set_dry_run(new)
-        self.tui._notice(f"dry-run {'روشن' if new else 'خاموش'} شد")
+        self.tui.notify(f"dry-run {'on' if new else 'off'}", "ok")
         self.refresh_status()
 
     def action_login(self) -> None:
         if self.bot.monitor is None:
-            self.tui._notice("ابتدا از صفحهٔ ورود، وارد شوید")
+            self.tui.notify("not signed in — open Login first", "err")
             return
         threading.Thread(target=self.bot.open_login_browser, daemon=True).start()
-        self.tui._notice("پنجرهٔ ورود باز می‌شود…")
+        self.tui.notify("opening the login window…", "info")
 
 
 class ProjectsScreen(BaseScreen):
     """Every scanned project, with the decision detail behind Enter."""
 
     SCREEN_NAME = "projects"
-    NAV = "پروژه‌ها"
+    NAV = "Projects"
 
     BINDINGS = BaseScreen.BINDINGS + [
-        Binding("enter", "open_detail", "جزئیات"),
-        Binding("b", "bid", "ارسال پیشنهاد"),
+        Binding("enter", "open_detail", "details"),
+        Binding("b", "bid", "bid"),
     ]
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="جست‌وجو…", id="search")
+        yield Input(placeholder="search…", id="search")
         yield DataTable(id="projects")
         yield VerticalScroll(Static("", id="detail", classes="card"))
 
     def on_mount(self) -> None:
         t = self.query_one("#projects", DataTable)
-        t.add_columns("قیمت", "عنوان", "همپوشانی", "دلیل")
+        t.add_columns("price", "title", "rivals", "reason")
         t.cursor_type = "row"
         self._rows: list = []
         self.refresh_status()
-        # Focus the table, not the search box: with the box focused every
-        # digit went into it, so the number-key shortcuts never fired. `/`
-        # moves focus into the box when you actually want to type.
+        # Focus the table, not the search box: with the box focused every digit
+        # went into it, so the shortcut keys never fired. `/` moves focus into
+        # the box when you actually want to type.
         t.focus()
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -188,7 +310,7 @@ class ProjectsScreen(BaseScreen):
         for p in rows:
             t.add_row(bridge.fmt_money(p.get("price")),
                       str(p.get("title", ""))[:52],
-                      str(p.get("overlap", "") or "—"),
+                      str(p.get("bid_count", "") or "—"),
                       str(p.get("reason", "") or "—")[:30])
 
     def action_cursor_down(self) -> None:
@@ -207,31 +329,31 @@ class ProjectsScreen(BaseScreen):
         """Enter: reveal the decision detail for the highlighted row."""
         p = self._selected()
         if p is None:
-            self.tui._notice("پروژه‌ای انتخاب نشده")
+            self.tui.notify("no project selected", "err")
             return
         detail = (
             f"[b {bridge.ACCENT}]{p.get('title', '')}[/]\n"
-            f"قیمت: {bridge.fmt_money(p.get('price'))}   "
-            f"بودجه: {bridge.fmt_money(p.get('budget_min'))}"
+            f"price {bridge.fmt_money(p.get('price'))}   "
+            f"budget {bridge.fmt_money(p.get('budget_min'))}"
             f"–{bridge.fmt_money(p.get('budget_max'))}\n"
-            f"رقبا: {p.get('bid_count', '?')}   "
-            f"مدت: {p.get('suggested_days', '?')} روز\n"
-            f"دلیل: {p.get('reason', '—')}\n"
-            f"[{bridge.MUTED}]{str(p.get('url', ''))}[/]")
+            f"rivals {p.get('bid_count', '?')}   "
+            f"days {p.get('suggested_days', '?')}\n"
+            f"reason [{bridge.MUTED}]{p.get('reason', '—')}[/]\n"
+            f"[{bridge.MUTED_2}]{str(p.get('url', ''))}[/]")
         self.query_one("#detail", Static).update(detail)
 
     def action_bid(self) -> None:
         """b: place a manual bid on the highlighted project."""
         if self.bot.cfg.dry_run:
-            self.tui._notice("dry-run روشن است — ارسال پیشنهاد غیرفعال")
+            self.tui.notify("dry-run is on — bidding is disabled", "err")
             return
         p = self._selected()
         if p is None:
-            self.tui._notice("پروژه‌ای انتخاب نشده")
+            self.tui.notify("no project selected", "err")
             return
         from ponishabot.models import Project
         obj = Project(**{k: p.get(k) for k in Project.__dataclass_fields__})
-        self.tui._notice(f"ارسال پیشنهاد برای {str(p.get('title'))[:30]}…")
+        self.tui.notify(f"bidding on {str(p.get('title'))[:30]}…", "info")
         threading.Thread(target=self.bot.manual_bid, args=(obj,),
                          daemon=True, name="tui-bid").start()
 
@@ -245,55 +367,55 @@ class SettingsScreen(BaseScreen):
     """
 
     SCREEN_NAME = "settings"
-    NAV = "تنظیمات"
+    NAV = "Settings"
 
     BINDINGS = BaseScreen.BINDINGS + [
-        Binding("ctrl+s", "save", "ذخیره"),
-        Binding("enter", "focus_next", "بعدی"),
-        Binding("escape", "revert", "لغو"),
-        Binding("x", "toggle_switch", "تغییر", show=False),
+        Binding("ctrl+s", "save", "save"),
+        Binding("enter", "focus_next", "next"),
+        Binding("escape", "revert", "revert"),
+        Binding("x", "toggle_switch", "toggle", show=False),
     ]
 
     # (config attribute, label, kind) — mirrors the dashboard's sections.
     FIELDS = [
-        ("dry_run", "فقط اعلان (dry_run)", "switch"),
-        ("headless", "کروم بدون پنجره", "switch"),
-        ("show_browser", "نمایش مرورگر زنده", "switch"),
-        ("refresh_interval", "بازهٔ بررسی (ثانیه)", "int"),
-        ("max_pages", "حداکثر صفحات", "int"),
-        ("priority_window_minutes", "پنجرهٔ اولویت (دقیقه)", "int"),
-        ("min_skill_match", "حداقل تطابق مهارت", "float"),
-        ("min_remaining_proposals", "توقف در سهمیه", "int"),
-        ("budget_min", "حداقل بودجه (تومان)", "int"),
-        ("budget_max", "حداکثر بودجه (تومان)", "int"),
-        ("telegram_token", "توکن تلگرام", "secret"),
-        ("telegram_chat_id", "شناسهٔ چت", "text"),
-        ("skills", "مهارت‌ها (با کاما)", "list"),
-        ("profile_name", "نام", "text"),
-        ("profile_about", "دستورالعمل‌های AI", "text"),
-        ("profile_hourly_min", "نرخ ساعتی حداقل", "int"),
-        ("profile_hourly_max", "نرخ ساعتی حداکثر", "int"),
-        ("ai_enabled", "موتور AI", "switch"),
-        ("ai_base_url", "آدرس endpoint", "text"),
-        ("ai_api_key", "کلید API", "secret"),
-        ("ai_model", "مدل", "text"),
-        ("ai_min_skill_gate", "آستانهٔ مهارت", "float"),
-        ("ai_temperature", "دما", "float"),
-        ("ai_max_description_chars", "حداکثر کاراکتر توضیحات", "int"),
-        ("karlancer_enabled", "دادهٔ بازار Karlancer", "switch"),
-        ("karlancer_max_pages", "صفحات Karlancer", "int"),
-        ("high_competition_threshold", "آستانهٔ رقابت بالا", "int"),
-        ("urgency_premium_percent", "حباب فوری (%)", "int"),
-        ("premium_badge_multiplier", "ضریب بج متمایز", "float"),
-        ("low_competition_discount_percent", "رقابت کم (%)", "int"),
-        ("high_competition_discount_percent", "رقابت زیاد (%)", "int"),
-        ("forex_enabled", "فارکس", "switch"),
-        ("baseline_usd_rate", "نرخ مبنا دلار", "int"),
-        ("forex_sensitivity", "حساسیت فارکس", "float"),
-        ("forex_source", "منبع نرخ", "text"),
-        ("karlancer_soft_clamp_enabled", "کلَمپ نرم", "switch"),
-        ("karlancer_clamp_multiplier", "ضریب کلَمپ", "float"),
-        ("karlancer_target_multiplier", "ضریب هدف", "float"),
+        ("dry_run", "notify only (dry_run)", "switch"),
+        ("headless", "headless Chrome", "switch"),
+        ("show_browser", "show live browser", "switch"),
+        ("refresh_interval", "poll interval (sec)", "int"),
+        ("max_pages", "max pages", "int"),
+        ("priority_window_minutes", "priority window (min)", "int"),
+        ("min_skill_match", "min skill match", "float"),
+        ("min_remaining_proposals", "stop at quota", "int"),
+        ("budget_min", "budget min (Toman)", "int"),
+        ("budget_max", "budget max (Toman)", "int"),
+        ("telegram_token", "Telegram token", "secret"),
+        ("telegram_chat_id", "Telegram chat id", "text"),
+        ("skills", "skills (comma separated)", "list"),
+        ("profile_name", "name", "text"),
+        ("profile_about", "AI instructions", "text"),
+        ("profile_hourly_min", "hourly min", "int"),
+        ("profile_hourly_max", "hourly max", "int"),
+        ("ai_enabled", "AI engine", "switch"),
+        ("ai_base_url", "endpoint URL", "text"),
+        ("ai_api_key", "API key", "secret"),
+        ("ai_model", "model", "text"),
+        ("ai_min_skill_gate", "skill gate", "float"),
+        ("ai_temperature", "temperature", "float"),
+        ("ai_max_description_chars", "max description chars", "int"),
+        ("karlancer_enabled", "Karlancer market data", "switch"),
+        ("karlancer_max_pages", "Karlancer pages", "int"),
+        ("high_competition_threshold", "high competition at", "int"),
+        ("urgency_premium_percent", "urgent premium (%)", "int"),
+        ("premium_badge_multiplier", "premium badge multiplier", "float"),
+        ("low_competition_discount_percent", "low competition (%)", "int"),
+        ("high_competition_discount_percent", "high competition (%)", "int"),
+        ("forex_enabled", "forex uplift", "switch"),
+        ("baseline_usd_rate", "baseline USD rate", "int"),
+        ("forex_sensitivity", "forex sensitivity", "float"),
+        ("forex_source", "rate source", "text"),
+        ("karlancer_soft_clamp_enabled", "soft clamp", "switch"),
+        ("karlancer_clamp_multiplier", "clamp multiplier", "float"),
+        ("karlancer_target_multiplier", "target multiplier", "float"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -319,19 +441,17 @@ class SettingsScreen(BaseScreen):
                 self._inputs[attr] = inp
                 box.mount(Horizontal(Label(f"{label}  ", classes="muted"), inp,
                                      classes="row"))
-        self._notice("با Tab بین فیلدها، Ctrl+S ذخیره، Esc لغو")
+        self._note("Tab between fields · Ctrl+S to save · Esc to revert")
 
-    def _notice(self, message: str) -> None:
-        self.query_one("#notice", Static).update(f"[{bridge.MUTED}]{message}[/]")
+    def _note(self, message: str, kind: str = "muted") -> None:
+        colour = {"ok": bridge.OK, "err": bridge.DANGER}.get(kind, bridge.MUTED_2)
+        self.query_one("#notice", Static).update(f"[{colour}]{message}[/]")
 
     def action_toggle_switch(self) -> None:
         """x flips the switch the cursor is on."""
-        try:
-            sw = self.screen.focused
-            if isinstance(sw, Switch):
-                sw.value = not sw.value
-        except Exception:
-            pass
+        focused = self.focused
+        if isinstance(focused, Switch):
+            focused.value = not focused.value
 
     def action_revert(self) -> None:
         """Esc: reload from config, discarding unsaved edits."""
@@ -346,7 +466,7 @@ class SettingsScreen(BaseScreen):
             inp = self._inputs.get(attr)
             if inp is not None:
                 inp.value = str(value)
-        self._notice("تغییرات ذخیره‌نشده لغو شد")
+        self._note("unsaved changes reverted")
 
     def action_save(self) -> None:
         """Ctrl+S: validate every field, then hand it to the BotApp setters."""
@@ -366,7 +486,7 @@ class SettingsScreen(BaseScreen):
         try:
             values = bridge.settings_from_form(form, self.bot.cfg)
         except bridge.InvalidSetting as e:
-            self._notice(f"ذخیره نشد: {e}")
+            self._note(f"not saved: {e}", "err")
             return
 
         cfg = self.bot.cfg
@@ -410,29 +530,29 @@ class SettingsScreen(BaseScreen):
 
         from ponishabot.config import ConfigLoader
         ConfigLoader.save(cfg)
-        self._notice("ذخیره شد ✓")
+        self._note("saved ✓", "ok")
 
 
 class LoginScreen(BaseScreen):
     """Sign in without leaving the terminal: OTP, or hand off to Chrome."""
 
     SCREEN_NAME = "login"
-    NAV = "ورود"
+    NAV = "Login"
 
     BINDINGS = BaseScreen.BINDINGS + [
-        Binding("enter", "submit", "تأیید"),
-        Binding("o", "browser_login", "ورود با مرورگر"),
+        Binding("enter", "submit", "submit"),
+        Binding("o", "browser_login", "browser"),
     ]
 
     def compose(self) -> ComposeResult:
         yield Static("", id="session", classes="card")
-        yield Horizontal(Label("شماره موبایل  ", classes="muted"),
+        yield Horizontal(Label("mobile  ", classes="muted"),
                          Input(placeholder="09121234567", id="mobile"))
-        yield Horizontal(Label("کد پیامک      ", classes="muted"),
+        yield Horizontal(Label("code    ", classes="muted"),
                          Input(placeholder="------", id="otp"), id="otp-row")
         yield Static("", id="note", classes="card")
-        yield Horizontal(Button("درخواست کد", id="btn-request", variant="primary"),
-                         Button("ورود با مرورگر", id="btn-browser"))
+        yield Horizontal(Button("Send code", id="btn-request", variant="primary"),
+                         Button("Sign in with browser", id="btn-browser"))
 
     def on_mount(self) -> None:
         self.query_one("#otp-row").display = False
@@ -440,14 +560,13 @@ class LoginScreen(BaseScreen):
         self.refresh_status()
 
     def refresh_status(self) -> None:
-        from ponishabot.auth import PonishaAuth
         snap = self.tui.snapshot()
         ok = snap.get("has_cookies")
         self.query_one("#session", Static).update(
-            f"جلسه: [b {bridge.OK if ok else bridge.DANGER}]"
-            f"{'معتبر' if ok else 'نامعتبر — وارد شوید'}[/]"
-            f"\n[{bridge.MUTED}]مسیر OTP بدون مرورگر کار می‌کند؛ "
-            f"«ورود با مرورگر» کروم را باز می‌کند.[/]")
+            f"session: [b {bridge.OK if ok else bridge.DANGER}]"
+            f"{'valid' if ok else 'invalid — sign in below'}[/]\n"
+            f"[{bridge.MUTED_2}]OTP needs no browser. "
+            f"\"Sign in with browser\" opens Chrome.[/]")
 
     def _note(self, message: str, kind: str = "muted") -> None:
         colour = {"ok": bridge.OK, "err": bridge.DANGER}.get(kind, bridge.MUTED)
@@ -456,56 +575,59 @@ class LoginScreen(BaseScreen):
     def action_submit(self) -> None:
         """Enter: send the code, or verify it if the code field is showing."""
         from ponishabot.auth import PonishaAuth
-        auth = self.bot.auth
         mobile = self.query_one("#mobile", Input).value
         otp = self.query_one("#otp", Input).value
 
         if mobile and not self._mobile:
             if not PonishaAuth.normalize_mobile(mobile):
-                self._note("شمارهٔ موبایل نامعتبر است (مثال: 09121234567)", "err")
+                self._note("invalid mobile number (e.g. 09121234567)", "err")
                 return
             self._mobile = mobile
-            self._note("در حال ارسال کد…")
-            threading.Thread(target=self._request, args=(mobile,), daemon=True).start()
+            self._note("sending code…")
+            threading.Thread(target=self._request, args=(mobile,),
+                             daemon=True).start()
         elif self._mobile and otp:
-            self._note("در حال بررسی کد…")
+            self._note("verifying…")
             threading.Thread(target=self._verify, args=(self._mobile, otp),
                              daemon=True).start()
         else:
-            self._note("شماره را وارد کنید، بعد کد پیامک", "err")
+            self._note("enter a number, then the SMS code", "err")
 
     def _request(self, mobile: str) -> None:
         result = self.bot.auth.request_otp(mobile)
         if result.get("ok"):
             self.call_from_thread(self._show_otp_row)
         else:
+            # The error text comes from ponisha's own API and stays as sent.
             self.call_from_thread(self._note,
-                                  result.get("error", "ارسال کد ناموفق"), "err")
+                                  result.get("error", "could not send the code"),
+                                  "err")
 
     def _show_otp_row(self) -> None:
         self.query_one("#otp-row").display = True
         self.query_one("#otp", Input).focus()
-        self._note("کد پیامک را وارد کنید و Enter بزنید")
+        self._note("enter the SMS code and press Enter")
 
     def _verify(self, mobile: str, otp: str) -> None:
         result = self.bot.auth.verify_otp(mobile, otp)
         if result.get("ok"):
             self._mobile = ""
-            self.call_from_thread(self._note, "ورود موفق ✓", "ok")
+            self.call_from_thread(self._note, "signed in ✓", "ok")
             self.call_from_thread(self.query_one("#otp-row").__setattr__,
                                   "display", False)
             self.call_from_thread(self.refresh_status)
         else:
             self.call_from_thread(self._note,
-                                  result.get("error", "کد نامعتبر"), "err")
+                                  result.get("error", "invalid code"), "err")
 
     def action_browser_login(self) -> None:
         """o / button: the Chrome path, for when OTP is not set up."""
         if self.bot.monitor is None:
-            self._note("ابتدا ربات را از داشبورد شروع کنید", "err")
+            self._note("start the bot from the Dashboard first", "err")
             return
-        threading.Thread(target=self.bot.open_login_browser, daemon=True).start()
-        self._note("پنجرهٔ کروم باز می‌شود — وارد شوید، سپس پنجره را ببندید")
+        threading.Thread(target=self.bot.open_login_browser,
+                         daemon=True).start()
+        self._note("Chrome is opening — sign in, then close the window")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-request":
@@ -518,12 +640,12 @@ class LogScreen(BaseScreen):
     """The log, filtered so a healthy run is readable."""
 
     SCREEN_NAME = "log"
-    NAV = "لاگ"
+    NAV = "Log"
 
     BINDINGS = BaseScreen.BINDINGS + [
-        Binding("f", "cycle_level", "سطح"),
-        Binding("n", "toggle_noise", "نویز"),
-        Binding("c", "clear", "پاک‌کردن"),
+        Binding("f", "cycle_level", "level"),
+        Binding("n", "toggle_noise", "noise"),
+        Binding("c", "clear", "clear"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -538,11 +660,18 @@ class LogScreen(BaseScreen):
                                     level=self.tui.log_level,
                                     show_noise=self.tui.show_noise)
         collapsed = bridge.collapse_repeats(lines)[-200:]
+        # The noise state sits inside the colour tag, not inside square
+        # brackets of its own: `[hidden]` is valid Rich markup syntax for an
+        # unknown style, and Rich silently renders nothing for it — the label
+        # vanished from the header. Only the level name is safe in brackets
+        # because the three values are real style names, and even that is
+        # incidental.
+        noise = "shown" if self.tui.show_noise else "hidden"
         self.query_one("#log-head", Static).update(
-            f"سطح [{bridge.ACCENT}]{self.tui.log_level}[/]"
-            f"   نویز [{'روشن' if self.tui.show_noise else 'پنهان'}]"
-            f"   ردیف {len(collapsed)}"
-            f"   [{bridge.MUTED}](f سطح · n نویز · c پاک‌کردن)[/]")
+            f"level [{bridge.ACCENT}]{self.tui.log_level}[/]   "
+            f"noise [{bridge.MUTED}]{noise}[/]   "
+            f"rows {len(collapsed)}\n"
+            f"[{bridge.MUTED_2}]f level · n noise · c clear[/]")
 
         from rich.text import Text
         body = Text()
@@ -568,4 +697,6 @@ class LogScreen(BaseScreen):
         self.refresh_status()
 
 
-ALL_SCREENS = [DashboardScreen, ProjectsScreen, SettingsScreen, LoginScreen, LogScreen]
+# Menu first: Tab starts and Esc returns here.
+ALL_SCREENS = [MenuScreen, DashboardScreen, ProjectsScreen,
+               SettingsScreen, LoginScreen, LogScreen]
