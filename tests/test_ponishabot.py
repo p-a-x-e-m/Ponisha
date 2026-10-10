@@ -176,6 +176,57 @@ class HeuristicPricing(unittest.TestCase):
         plan = HeuristicBidDecision().decide(p, profile())
         self.assertEqual(plan.price, 7_000_000)
 
+
+class PricingGuideRanges(unittest.TestCase):
+    """The price guide in `profile.about` is read with a regex that only
+    understood the Latin 'M'.
+
+    A guide written in Persian — the natural way to write it — matched nothing
+    at all, and the estimate quietly fell through to the budget midpoint
+    instead. A real profile with five ranges produced zero matches.
+    """
+
+    def price_from(self, about, **profile_kw):
+        """Estimate from `about` alone.
+
+        The budget window is zeroed by default: `Profile.max_budget` defaults to
+        10,000,000, so leaving it would mask every case where the guide found
+        nothing and the fallback took over — the first version of these tests
+        passed for that reason.
+        """
+        from ponishabot.decision import HeuristicBidDecision
+        from ponishabot.models import Profile
+        profile_kw.setdefault("min_budget", 0)
+        profile_kw.setdefault("max_budget", 0)
+        return HeuristicBidDecision._guide_default_price(
+            Profile(skills=["Django"], about=about, **profile_kw))
+
+    def test_persian_unit_is_understood(self):
+        got = self.price_from("- CRUD ساده: ۲-۴ میلیون")
+        self.assertEqual(got, 3_000_000)
+
+    def test_latin_unit_still_works(self):
+        self.assertEqual(self.price_from("- CRUD simple: ۲-۴M"), 3_000_000)
+
+    def test_short_persian_unit_works(self):
+        self.assertEqual(self.price_from("- چیزی: ۲-۴ م"), 3_000_000)
+
+    def test_ranges_are_averaged(self):
+        got = self.price_from("- a: ۲-۴ میلیون\n- b: ۴-۸ میلیون")
+        self.assertEqual(got, 4_500_000)          # (3 + 6) / 2
+
+    def test_a_prose_sentence_is_not_a_range(self):
+        """A year span or a version range must not be read as a price."""
+        self.assertIsNone(self.price_from("۳.۵ سال فریلنس از ۱۴۰۲ تا ۱۴۰۵"))
+
+    def test_falls_back_to_the_budget_window(self):
+        got = self.price_from("no ranges here", min_budget=4_000_000,
+                              max_budget=10_000_000)
+        self.assertEqual(got, 7_000_000)
+
+    def test_returns_none_with_no_guide_and_no_window(self):
+        self.assertIsNone(self.price_from("no ranges here"))
+
     def test_urgent_badge_adds_20_percent(self):
         """«فوری» is applied on top of whatever competition produced."""
         p = project(budget_min=5_000_000, budget_max=9_000_000, bid_count=4,

@@ -278,7 +278,13 @@ class HeuristicBidDecision(BidDecision):
         about = profile.about or ""
         norm = about.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
         midpoints = []
-        for m in re.finditer(r"(\d+)\s*[-\u2013]\s*(\d+)\s*M", norm, re.IGNORECASE):
+        # `M`, `\u0645\u06cc\u0644\u06cc\u0648\u0646` or `\u0645` may follow the numbers. Only `M` used to, so a
+        # guide written the natural Persian way matched nothing and the
+        # estimate silently fell through to the budget midpoint \u2014 a real
+        # profile with five ranges produced zero matches.
+        scale = r"(?:M|\u0645\u06cc\u0644\u06cc\u0648\u0646|\u0645\b)"
+        for m in re.finditer(r"(\d+)\s*[-\u2013]\s*(\d+)\s*" + scale, norm,
+                             re.IGNORECASE):
             try:
                 lo, hi = int(m.group(1)), int(m.group(2))
             except ValueError:
