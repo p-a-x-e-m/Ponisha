@@ -981,6 +981,73 @@ class TuiNavigation(unittest.TestCase):
                 f"{field_id}: the label is one row, so it is not stretched "
                 f"to its field")
 
+    def test_unset_text_field_shows_empty_not_none(self):
+        """`None` is unset, not the four-character string "None".
+
+        `user_data_dir` displayed 'None' in its box, which then read back as a
+        path if the form was ever saved unchanged.
+        """
+        from textual.widgets import Input
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("3")
+                await pilot.pause()
+                value = app.screen.query_one("#f-user_data_dir", Input).value
+                await pilot.press("q")
+                return value
+
+        self.assertNotIn(self._run(scenario()), ("None", "none"),
+                         "an unset field rendered as the text 'None'")
+
+    def test_proposal_file_and_profile_dir_are_saved(self):
+        """Both are strings with no BotApp setter, so they were edited, shown as
+        saved, and silently dropped — the dashboard writes both."""
+        from textual.widgets import Input
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("3")
+                await pilot.pause()
+                app.screen.query_one("#f-proposal_template", Input).value = "mine.txt"
+                app.screen.query_one("#f-user_data_dir", Input).value = "/tmp/prof"
+                await pilot.press("ctrl+s")
+                await pilot.pause()
+                out = (app.bot.cfg.proposal_template, app.bot.cfg.user_data_dir)
+                await pilot.press("q")
+                return out
+
+        proposal, profile_dir = self._run(scenario())
+        self.assertEqual(proposal, "mine.txt",
+                         "the proposal file was not saved")
+        self.assertEqual(profile_dir, "/tmp/prof",
+                         "the Chrome profile dir was not saved")
+
+    def test_clearing_the_profile_dir_stores_null_not_empty(self):
+        """Empty means unset: "" would be read as a real directory path."""
+        from textual.widgets import Input
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("3")
+                await pilot.pause()
+                inp = app.screen.query_one("#f-user_data_dir", Input)
+                inp.value = "  "
+                await pilot.press("ctrl+s")
+                await pilot.pause()
+                value = app.bot.cfg.user_data_dir
+                await pilot.press("q")
+                return value
+
+        self.assertIsNone(self._run(scenario()),
+                          "a blank profile dir was stored as an empty string")
+
     def test_saving_never_touches_the_real_config(self):
         """The test harness must redirect `save` as well as `load`.
 

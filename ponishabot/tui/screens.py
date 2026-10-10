@@ -501,6 +501,12 @@ class SettingsScreen(BaseScreen):
                         Switch(value=bool(value), id=f"f-{attr}"),
                         classes="field-row"))
                 else:
+                    # `None` is "unset" and must show as an empty box.
+                    # str(None) is the text "None", which then reads back as a
+                    # real path — user_data_dir displayed 'None' on a config
+                    # where the value was null.
+                    if value is None:
+                        value = ""
                     if kind == "secret":
                         value = "•" * 8 if value else ""
                     elif kind == "list":
@@ -621,6 +627,16 @@ class SettingsScreen(BaseScreen):
                      "karlancer_target_multiplier"):
             if attr in values:
                 setattr(cfg, attr, values[attr])
+
+        # These two are strings that were being edited and then dropped: they
+        # are in the form but were absent from every setter and from the list
+        # above, so a change to either reported "saved" and went nowhere. The
+        # dashboard's api_settings writes both, which is the behaviour to match.
+        if "proposal_template" in values:
+            cfg.proposal_template = str(values["proposal_template"] or "").strip()
+        if "user_data_dir" in values:
+            # Empty means unset, and must be stored as null rather than "".
+            cfg.user_data_dir = str(values["user_data_dir"] or "").strip() or None
 
         from ponishabot.config import ConfigLoader
         ConfigLoader.save(cfg)
