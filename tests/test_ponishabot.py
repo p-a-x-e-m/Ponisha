@@ -988,8 +988,12 @@ class TuiNavigation(unittest.TestCase):
         pressed Ctrl+S, the settings screen called the real `ConfigLoader.save`,
         and every value — skills, Telegram token, AI key, profile — was
         replaced with the test's defaults. The suite passed; the file on disk
-        was wrong. This asserts the path rather than the outcome, so it holds
-        even if the temp file happens to look right.
+        was wrong.
+
+        A missing config.yaml is a valid starting state, not a failure: it is
+        gitignored, so it is absent in CI and in a fresh clone. The first
+        version of this test asserted the file existed and failed on every CI
+        runner for that reason.
         """
         from textual.widgets import Input
         from ponishabot import paths
@@ -1010,12 +1014,18 @@ class TuiNavigation(unittest.TestCase):
                 await pilot.press("q")
 
         real_path = paths.CONFIG_PATH
-        before = open(real_path, encoding="utf-8").read() \
-            if os.path.exists(real_path) else ""
+        existed = os.path.exists(real_path)
+        before = open(real_path, encoding="utf-8").read() if existed else None
         self._run(scenario())
 
-        self.assertTrue(os.path.exists(real_path),
-                        "the real config.yaml was removed by a test")
+        if not existed:
+            # Never present on a fresh clone or CI. A test creating it would be
+            # just as much a leak as overwriting one, so that is the check.
+            self.assertFalse(
+                os.path.exists(real_path),
+                "a test created the real config.yaml")
+            return
+
         after = open(real_path, encoding="utf-8").read()
         self.assertNotIn(marker, after,
                          "a test value reached the real config.yaml")
