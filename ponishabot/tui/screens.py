@@ -517,8 +517,87 @@ class SettingsScreen(BaseScreen):
                     box.mount(Horizontal(
                         Label(f"{label}  ", classes="field-label"), inp,
                         classes="field-row"))
+
+        # A connection test belongs beside the credentials it tests, so it sits
+        # in the section rather than on a screen of its own — the dashboard has
+        # the same two buttons, and finding them meant leaving the terminal.
+        for section_name, button_id, label in (
+                ("Telegram", "btn-test-tg", "Send test message"),
+                ("AI", "btn-test-ai", "Test AI connection")):
+            index = next((n for n, (name, _f) in enumerate(self.SECTIONS)
+                          if name == section_name), None)
+            if index is None:
+                continue
+            self.query_one(f"#sec-{index}", Vertical).mount(Horizontal(
+                Button(label, id=button_id, variant="primary"),
+                classes="controls"))
+
         self._show_section(0)
         self._note("Tab section · ↑↓ field · x toggle · Ctrl+S save · Esc revert")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-test-tg":
+            self.action_test_telegram()
+        elif event.button.id == "btn-test-ai":
+            self.action_test_ai()
+
+    # ── connection tests ──
+    def action_test_telegram(self) -> None:
+        """Send one message through the credentials currently in the form.
+
+        Reads the boxes, not the saved config, so the answer is about what the
+        operator just typed — the dashboard behaves the same way.
+        """
+        from ponishabot.notifier import TelegramNotifier
+        token = self._inputs["telegram_token"].value.strip()
+        chat_id = self._inputs["telegram_chat_id"].value.strip()
+        if set(token) == {"•"}:          # untouched placeholder
+            token = self.bot.cfg.telegram_token
+        if not token or not chat_id:
+            self._note("fill in bot token and chat id first", "err")
+            return
+        self._note("sending a test message…")
+
+        def worker():
+            try:
+                ok = TelegramNotifier(token, chat_id).send(
+                    "ponishabot: Telegram connection test successful")
+            except Exception as e:
+                ok = False
+                logger.error(f"Telegram test error: {e}")
+            self.call_from_thread(
+                self._note,
+                "telegram OK — check your chat" if ok
+                else "telegram failed (token, chat id, or the network)",
+                "ok" if ok else "err")
+        threading.Thread(target=worker, daemon=True,
+                         name="tui-test-tg").start()
+
+    def action_test_ai(self) -> None:
+        """Probe the endpoint with the credentials in the form."""
+        base_url = self._inputs["ai_base_url"].value.strip()
+        key = self._inputs["ai_api_key"].value.strip()
+        model = self._inputs["ai_model"].value.strip()
+        if set(key) == {"•"}:
+            key = self.bot.cfg.ai_api_key
+        if not base_url or not key or not model:
+            self._note("fill in endpoint, API key and model first", "err")
+            return
+        self._note("probing the AI endpoint…")
+
+        def worker():
+            from ponishabot.decision import LLMBidDecision
+            try:
+                ok, detail = LLMBidDecision(
+                    api_key=key, base_url=base_url, model=model).test_connection()
+            except Exception as e:
+                ok, detail = False, f"{type(e).__name__}: {e}"
+            self.call_from_thread(
+                self._note,
+                f"AI OK ({model})" if ok else f"AI failed: {detail}",
+                "ok" if ok else "err")
+        threading.Thread(target=worker, daemon=True,
+                         name="tui-test-ai").start()
 
     # ── tabs ──
     def _show_section(self, index: int) -> None:
@@ -649,25 +728,40 @@ class LoginScreen(BaseScreen):
     SCREEN_NAME = "login"
     NAV = "Login"
 
+    # Enter is NOT bound here. `Input` has its own `enter -> submit` binding
+    # that posts `Input.Submitted` and swallows the key, so a screen-level
+    # binding never fires while a field has focus — which is the normal state
+    # on this screen. Pressing Enter did nothing at all. The message handler
+    # below is the documented way to catch it.
     BINDINGS = BaseScreen.BINDINGS + [
-        Binding("enter", "submit", "submit"),
         Binding("o", "browser_login", "browser"),
     ]
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter inside either field: send the code, or verify it."""
+        event.stop()
+        self.action_submit()
 
     def compose(self) -> ComposeResult:
         yield Static("", id="session", classes="card")
         yield Horizontal(Label("mobile  ", classes="muted"),
-                         Input(placeholder="09121234567", id="mobile"))
+                         Input(placeholder="09121234567", id="mobile"),
+                         classes="field-row")
+        # Always present. It used to be hidden until a code had been sent, so
+        # there was no way to type one in — the field only appeared after
+        # `request_otp` succeeded, and Enter on an empty mobile did nothing.
         yield Horizontal(Label("code    ", classes="muted"),
-                         Input(placeholder="------", id="otp"), id="otp-row")
+                         Input(placeholder="sent by SMS", id="otp"),
+                         classes="field-row")
         yield Static("", id="note", classes="card")
         yield Horizontal(Button("Send code", id="btn-request", variant="primary"),
-                         Button("Sign in with browser", id="btn-browser"))
+                         Button("Sign in with browser", id="btn-browser"),
+                         classes="controls")
 
     def on_mount(self) -> None:
-        self.query_one("#otp-row").display = False
         self._mobile = ""
         self.refresh_status()
+        self.query_one("#mobile", Input).focus()
 
     def refresh_status(self) -> None:
         snap = self.tui.snapshot()
@@ -683,48 +777,56 @@ class LoginScreen(BaseScreen):
         self.query_one("#note", Static).update(f"[{colour}]{message}[/]")
 
     def action_submit(self) -> None:
-        """Enter: send the code, or verify it if the code field is showing."""
-        from ponishabot.auth import PonishaAuth
-        mobile = self.query_one("#mobile", Input).value
-        otp = self.query_one("#otp", Input).value
+        """Enter: send the code, or verify it — depending on which box is full.
 
-        if mobile and not self._mobile:
-            if not PonishaAuth.normalize_mobile(mobile):
-                self._note("invalid mobile number (e.g. 09121234567)", "err")
-                return
-            self._mobile = mobile
-            self._note("sending code…")
-            threading.Thread(target=self._request, args=(mobile,),
-                             daemon=True).start()
-        elif self._mobile and otp:
+        Both fields are on screen the whole time, so the choice is made from
+        what has been typed rather than from a hidden/shown state.
+        """
+        from ponishabot.auth import PonishaAuth
+        mobile = self.query_one("#mobile", Input).value.strip()
+        otp = self.query_one("#otp", Input).value.strip()
+
+        # A code entered means the SMS already arrived: verify. That check comes
+        # first, because after a successful request both boxes hold a value.
+        if otp and self._mobile:
             self._note("verifying…")
             threading.Thread(target=self._verify, args=(self._mobile, otp),
                              daemon=True).start()
-        else:
-            self._note("enter a number, then the SMS code", "err")
+            return
+
+        if not mobile:
+            self._note("enter your mobile number, then press Enter", "err")
+            return
+        if not PonishaAuth.normalize_mobile(mobile):
+            self._note("invalid mobile number (e.g. 09121234567)", "err")
+            return
+
+        self._mobile = mobile
+        self._note("sending the code…")
+        threading.Thread(target=self._request, args=(mobile,),
+                         daemon=True).start()
 
     def _request(self, mobile: str) -> None:
         result = self.bot.auth.request_otp(mobile)
         if result.get("ok"):
-            self.call_from_thread(self._show_otp_row)
+            self.call_from_thread(self._after_send)
         else:
             # The error text comes from ponisha's own API and stays as sent.
             self.call_from_thread(self._note,
                                   result.get("error", "could not send the code"),
                                   "err")
 
-    def _show_otp_row(self) -> None:
-        self.query_one("#otp-row").display = True
+    def _after_send(self) -> None:
         self.query_one("#otp", Input).focus()
-        self._note("enter the SMS code and press Enter")
+        self._note("code sent — type it in the code box and press Enter")
 
     def _verify(self, mobile: str, otp: str) -> None:
         result = self.bot.auth.verify_otp(mobile, otp)
         if result.get("ok"):
             self._mobile = ""
             self.call_from_thread(self._note, "signed in ✓", "ok")
-            self.call_from_thread(self.query_one("#otp-row").__setattr__,
-                                  "display", False)
+            self.call_from_thread(self.query_one("#otp", Input).__setattr__,
+                                  "value", "")
             self.call_from_thread(self.refresh_status)
         else:
             self.call_from_thread(self._note,

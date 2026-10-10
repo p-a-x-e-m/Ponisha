@@ -1099,6 +1099,116 @@ class TuiNavigation(unittest.TestCase):
         self.assertIsNone(self._run(scenario()),
                           "a blank profile dir was stored as an empty string")
 
+    def test_login_has_a_visible_code_field(self):
+        """The code box must be on screen from the start.
+
+        It used to be hidden until `request_otp` succeeded, so there was no way
+        to type a code in — and with an empty box, Enter on the mobile field
+        did nothing and the screen looked broken.
+        """
+        from textual.widgets import Input
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("4")               # menu -> login
+                await pilot.pause()
+                otp = app.screen.query_one("#otp", Input)
+                await pilot.press("q")
+                return otp.display, otp.size.height, otp.can_focus
+
+        display, height, focusable = self._run(scenario())
+        self.assertTrue(display, "the code field is hidden")
+        self.assertGreater(height, 0, "the code field has no height")
+        self.assertTrue(focusable, "the code field cannot be focused")
+
+    def test_login_rejects_an_empty_or_bad_mobile(self):
+        """Enter with nothing typed must say so, not sit there."""
+        from textual.widgets import Static
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("4")
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                note = app.screen.query_one("#note", Static)
+                content = getattr(note, "content", "")
+                # `content` is already markup; rendering it again as markup
+                # returned an empty string and made this test pass on nothing.
+                text = content.plain if hasattr(content, "plain") else str(content)
+                await pilot.press("q")
+                return text
+
+        self.assertIn("mobile", self._run(scenario()).lower(),
+                      "an empty submit gave no guidance")
+
+    def test_settings_has_connection_test_buttons(self):
+        """Test AI and Test Telegram exist in the dashboard; without them here
+        the only way to check credentials was to leave the terminal."""
+        from textual.widgets import Button
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("3")               # menu -> settings
+                await pilot.pause()
+                found = {}
+                for i, (name, _fields) in enumerate(app.screen.SECTIONS):
+                    ids = {b.id for b in app.screen.query_one(f"#sec-{i}").query(Button)}
+                    if ids:
+                        found[name] = ids
+                await pilot.press("q")
+                return found
+
+        found = self._run(scenario())
+        self.assertIn("btn-test-tg", found.get("Telegram", set()),
+                      "no Telegram test button in the Telegram section")
+        self.assertIn("btn-test-ai", found.get("AI", set()),
+                      "no AI test button in the AI section")
+
+    def test_telegram_test_reads_the_form_not_the_saved_config(self):
+        """Typing new credentials and pressing Test must test those, or the
+        button answers a question the operator did not ask."""
+        from textual.widgets import Button, Input
+
+        async def scenario():
+            app = self._build()
+            sent = {}
+
+            class FakeNotifier:
+                def __init__(self, token, chat_id):
+                    sent["token"] = token
+                    sent["chat_id"] = chat_id
+
+                def send(self, *a, **k):
+                    return True
+
+            import ponishabot.notifier as notifier
+            real = notifier.TelegramNotifier
+            notifier.TelegramNotifier = FakeNotifier
+            try:
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.pause()
+                    await pilot.press("3")
+                    await pilot.pause()
+                    # Type fresh values into the form.
+                    app.screen._inputs["telegram_token"].value = "TYPED-TOKEN"
+                    app.screen._inputs["telegram_chat_id"].value = "TYPED-CHAT"
+                    app.screen.query_one("#btn-test-tg", Button).press()
+                    await pilot.press("q")
+            finally:
+                notifier.TelegramNotifier = real
+            return sent
+
+        sent = self._run(scenario())
+        self.assertEqual(sent.get("token"), "TYPED-TOKEN",
+                         "the test used the saved token, not the typed one")
+
     def test_saving_never_touches_the_real_config(self):
         """The test harness must redirect `save` as well as `load`.
 
