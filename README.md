@@ -184,7 +184,7 @@ python manage.py bot_login          # باز کردن کروم برای لاگی
 | صفحه | چه‌کار می‌کند |
 |---|---|
 | **Menu** | انتخاب صفحه با `1`..`5` یا `↑↓` + `Enter` |
-| **Dashboard** | وضعیت زنده، آخرین پیشنهادها، شروع/توقف |
+| **Dashboard** | وضعیت زنده، آخرین پیشنهادها، **دکمه‌های Start / Stop / Sign in** |
 | **Projects** | جدول پروژه‌های اسکن‌شده؛ `Enter` جزئیات تصمیم، `/` جست‌وجو، `b` ارسال پیشنهاد |
 | **Settings** | همهٔ تنظیمات در **۷ بخش**؛ `Tab` بین بخش‌ها، `Ctrl+S` ذخیره، `Esc` لغو |
 | **Login** | شمارهٔ موبایل → کد پیامک، یا `o` برای ورود با مرورگر |
@@ -207,6 +207,11 @@ Search & budget · Profile · AI · Pricing · Forex & clamp. `Tab` بین بخ�
 | `Esc` | برگشت به منو / لغو ویرایش |
 | `m` | برگشت به منو از هر جا |
 | `q` | خروج (درایور کروم بسته می‌شود) |
+
+**کلیدها همیشه در نوار پایین صفحه نمایش داده می‌شوند** (Footer)، پس لازم نیست
+جایی حفظشان کنی. تغییر وضعیت با **دکمه** هم ممکن است: داشبورد سه دکمه دارد —
+Start · Stop · Sign in — و دکمه‌ها با وضعیت واقعی هم‌گام می‌شوند (وقتی ربات
+خاموش است Stop غیرفعال است و برعکس).
 
 > **چرا `ctrl+→` و نه یک کلید ساده‌تر؟** یک کلید **چاپ‌شدنی** هرگز به برنامه
 > نمی‌رسد وقتی فیلد متنی فوکوس دارد — خودِ `Input` آن را می‌بلعد و برنامه حتی
@@ -907,7 +912,7 @@ each step.
 | Screen | What it does |
 |---|---|
 | **Menu** | pick a screen with `1`..`5`, or `↑↓` + `Enter` |
-| **Dashboard** | live status, recent proposals, start/stop |
+| **Dashboard** | live status, recent proposals, **Start / Stop / Sign in buttons** |
 | **Projects** | table of scanned projects; `Enter` shows the decision, `/` searches, `b` bids |
 | **Settings** | every setting in **7 sections**; `Tab` between sections, `Ctrl+S` saves, `Esc` reverts |
 | **Login** | mobile → SMS code, or `o` for browser login |
@@ -936,6 +941,11 @@ longer means 38 presses of Tab.
 > does not see the event at all. Measured rather than assumed: on the login
 > screen, with focus in the mobile field, `]` did nothing and that screen became
 > a dead end. `ctrl+→` is not printable, so it always arrives.
+
+**The keys are always on screen** in the footer, so there is nothing to
+memorise. State changes are also available as **buttons**: the dashboard has
+Start, Stop and Sign in, and they follow the real state — Stop is disabled while
+the bot is down and Start is disabled while it runs.
 
 > **The mouse is off.** Clicks, wheel scrolling and hover do nothing — this
 > interface is keyboard-only.

@@ -554,22 +554,37 @@ class TerminalSingleton(unittest.TestCase):
 
 
 def _patch_config_path(path: str):
-    """Point `ConfigLoader.load` at a temp file for one test.
+    """Point BOTH `ConfigLoader.load` and `.save` at a temp file for one test.
+
+    `save` is included because leaving it out destroyed the operator's real
+    config.yaml: a test pressed Ctrl+S in the settings screen, `save` wrote to
+    the live file, and every value — skills, tokens, profile — was replaced by
+    the test's defaults. Nothing in the suite could have caught that, because
+    the test passed; it was the file on disk that was wrong.
 
     Replacing `paths.CONFIG_PATH` does not work: `load` declares
     `path: str = paths.CONFIG_PATH` as a default argument and Python binds
     defaults once at def time. Replacing `__defaults__` worked until a second
-    parameter was added, at which point the tuple had to grow too — so the
-    wrapper takes *args/**kwargs and cannot go stale that way.
+    parameter was added and the tuple had to grow with it — a wrapper taking
+    *args/**kwargs cannot go stale that way.
     """
     from ponishabot import config
-    real = config.ConfigLoader.load
+    real_load = config.ConfigLoader.load
+    real_save = config.ConfigLoader.save
 
     def load(*args, **kwargs):
         kwargs.setdefault("path", path)
-        return real(*args, **kwargs)
+        return real_load(*args, **kwargs)
 
-    return mock.patch.object(config.ConfigLoader, "load", staticmethod(load))
+    def save(cfg, *args, **kwargs):
+        kwargs.setdefault("path", path)
+        return real_save(cfg, *args, **kwargs)
+
+    return mock.patch.multiple(
+        config.ConfigLoader,
+        load=staticmethod(load),
+        save=staticmethod(save),
+    )
 
 
 def _textual_available() -> bool:
@@ -838,6 +853,174 @@ class TuiNavigation(unittest.TestCase):
         names = self._run(scenario())
         self.assertEqual(len(set(names)), 7, f"sections: {names}")
         self.assertEqual(names[0], names[7], "the sections did not wrap")
+
+    def test_dashboard_has_start_and_stop_buttons(self):
+        """The keys alone were not discoverable: nothing on screen said `s`
+        existed, so starting the bot meant reading the source."""
+        from textual.widgets import Button
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("1")               # menu -> dashboard
+                await pilot.pause()
+                ids = {b.id for b in app.screen.query(Button)}
+                labels = {str(b.label) for b in app.screen.query(Button)}
+                await pilot.press("q")
+                return ids, labels
+
+        ids, labels = self._run(scenario())
+        self.assertIn("btn-start", ids)
+        self.assertIn("btn-stop", ids)
+        self.assertIn("Start", labels)
+        self.assertIn("Stop", labels)
+
+    def test_start_button_starts_the_bot(self):
+        from textual.widgets import Button
+
+        async def scenario():
+            app = self._build()
+            started = []
+            app.start_monitor = lambda: started.append(1)
+            # A monitor is required for the button to be willing to start.
+            app.bot.monitor = object()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("1")
+                await pilot.pause()
+                # Activated directly rather than via Tab: Tab cycles screens
+                # here, so pressing it walked off the dashboard.
+                app.screen.query_one("#btn-start", Button).press()
+                await pilot.pause()
+                await pilot.press("q")
+                return started
+
+        self.assertEqual(self._run(scenario()), [1],
+                         "the Start button did not start the monitor")
+
+    def test_stop_button_is_disabled_until_running(self):
+        """The buttons track state, so it is visible at a glance whether the
+        bot is up, and Start cannot be pressed twice."""
+        from textual.widgets import Button
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("1")
+                await pilot.pause()
+                start = app.screen.query_one("#btn-start", Button)
+                stop = app.screen.query_one("#btn-stop", Button)
+                await pilot.press("q")
+                return start.disabled, stop.disabled
+
+        start_disabled, stop_disabled = self._run(scenario())
+        self.assertFalse(start_disabled, "Start should be available when stopped")
+        self.assertTrue(stop_disabled, "Stop should be disabled when stopped")
+
+    def test_footer_shows_the_key_legend(self):
+        """Without it, `s` and the rest were invisible."""
+        from textual.widgets import Footer
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                has_footer = bool(app.query(Footer))
+                # `ActiveBinding` wraps the Binding; the key is on `.binding`.
+                keys = {ab.binding.key
+                        for ab in app.screen.active_bindings.values()}
+                await pilot.press("q")
+                return has_footer, keys
+
+        has_footer, keys = self._run(scenario())
+        self.assertTrue(has_footer, "no Footer is composed, so no key legend")
+        self.assertIn("q", keys)
+
+    def test_label_is_level_with_its_field(self):
+        """Label and field occupy the same rows on screen.
+
+        Measured with `region`, not `size`: `size.height` is the content box and
+        reports 1 for a field whose border occupies three rows, so comparing it
+        against the label's compared two different things — the earlier version
+        of this test did exactly that and passed against misaligned rows.
+
+        Both field kinds are checked because they differ: an Input's box is
+        three rows via its border, while a Switch reports a content height of 1
+        and is centred in its row instead.
+        """
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("3")               # menu -> settings
+                await pilot.pause()
+                rows = {}
+                for field_id in ("f-proposal_template", "f-dry_run"):
+                    field = app.screen.query_one(f"#{field_id}")
+                    label = next(c for c in field.parent.children
+                                 if type(c).__name__ == "Label")
+                    rows[field_id] = (label.region, field.region)
+                await pilot.press("q")
+                return rows
+
+        rows = self._run(scenario())
+        for field_id, (label, field) in rows.items():
+            # The label's rows must sit inside the field's rows, not above them.
+            self.assertTrue(
+                field.y <= label.y < field.y + field.height,
+                f"{field_id}: label starts at y={label.y} "
+                f"(h={label.height}), field occupies y={field.y}.."
+                f"{field.y + field.height - 1}")
+        # The label is the taller of the two by design, so a regression that
+        # dropped it back to one row would show up here.
+        for field_id, (label, _field) in rows.items():
+            self.assertGreater(
+                label.height, 1,
+                f"{field_id}: the label is one row, so it is not stretched "
+                f"to its field")
+
+    def test_saving_never_touches_the_real_config(self):
+        """The test harness must redirect `save` as well as `load`.
+
+        Leaving `save` unpatched destroyed the operator's config.yaml: a test
+        pressed Ctrl+S, the settings screen called the real `ConfigLoader.save`,
+        and every value — skills, Telegram token, AI key, profile — was
+        replaced with the test's defaults. The suite passed; the file on disk
+        was wrong. This asserts the path rather than the outcome, so it holds
+        even if the temp file happens to look right.
+        """
+        from textual.widgets import Input
+        from ponishabot import paths
+
+        # A value distinctive enough to find if it leaks, written to a field
+        # that a save would include.
+        marker = "LEAK-CANARY-9152"
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("3")               # menu -> settings
+                await pilot.pause()
+                app.screen.query_one("#f-profile_name", Input).value = marker
+                await pilot.press("ctrl+s")
+                await pilot.pause()
+                await pilot.press("q")
+
+        real_path = paths.CONFIG_PATH
+        before = open(real_path, encoding="utf-8").read() \
+            if os.path.exists(real_path) else ""
+        self._run(scenario())
+
+        self.assertTrue(os.path.exists(real_path),
+                        "the real config.yaml was removed by a test")
+        after = open(real_path, encoding="utf-8").read()
+        self.assertNotIn(marker, after,
+                         "a test value reached the real config.yaml")
+        self.assertEqual(before, after,
+                         "the real config.yaml was rewritten by a test")
 
     def test_settings_saves_fields_from_a_hidden_section(self):
         """Ctrl+S must read every section, not only the visible one.

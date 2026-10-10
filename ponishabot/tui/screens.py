@@ -187,6 +187,13 @@ class DashboardScreen(BaseScreen):
     def compose(self) -> ComposeResult:
         yield Horizontal(Static("", id="status-card", classes="card"),
                          Static("", id="meta-card", classes="card"))
+        # Real buttons, not just the `s` binding. Nothing on screen said the key
+        # existed, so the only way to start the bot was to read the source.
+        yield Horizontal(
+            Button("Start", id="btn-start", variant="primary"),
+            Button("Stop", id="btn-stop"),
+            Button("Sign in", id="btn-login"),
+            classes="controls")
         yield Static("Recent proposals", classes="card-title")
         yield DataTable(id="recent")
         yield Static("", id="notice")
@@ -196,6 +203,16 @@ class DashboardScreen(BaseScreen):
         table.add_columns("price", "title", "days")
         table.cursor_type = "row"
         self.refresh_status()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-start":
+            self.action_toggle_run()
+        elif event.button.id == "btn-stop":
+            if self.bot.is_running():
+                self.tui.notify("stopping…", "info")
+                self.tui.stop_monitor()
+        elif event.button.id == "btn-login":
+            self.action_login()
 
     def refresh_status(self) -> None:
         snap = self.tui.snapshot()
@@ -216,6 +233,15 @@ class DashboardScreen(BaseScreen):
             f"session {rows.get('session')}\n"
             f"dry-run [{bridge.DANGER if dry else bridge.MUTED}]"
             f"{'on' if dry else 'off'}[/]")
+
+        # Buttons follow the actual state, so it is visible at a glance whether
+        # the bot is running — and pressing Start twice cannot happen.
+        running = bool(snap.get("running"))
+        try:
+            self.query_one("#btn-start", Button).disabled = running
+            self.query_one("#btn-stop", Button).disabled = not running
+        except Exception:
+            pass          # not mounted yet on the first refresh
 
         table = self.query_one("#recent", DataTable)
         wanted = self.tui.recent_projects()[:20]

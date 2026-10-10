@@ -22,7 +22,7 @@ import threading
 import time
 from typing import Optional
 
-from textual.app import App
+from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Static
 
@@ -158,8 +158,38 @@ class PonishaTUI(App):
         padding: 1 2;
         height: auto;
     }}
-    .field-row {{ height: auto; }}
-    .field-label {{ width: 26; color: {bridge.MUTED}; }}
+
+    /* Label level with its field.
+       The label is one row and its field is one row too, so both sat at the top
+       of a three-row box and the text looked detached from the box it names.
+       `align-vertical` is set on the *children*, not the row: the row's own
+       value is not inherited, which is why centring it did nothing.
+       `Switch` also hard-codes a content height of 1 in its DEFAULT_CSS, so it
+       is sized here rather than left to report itself. */
+    .field-row {{
+        height: 3;
+    }}
+    .field-row > Label {{
+        width: 28;
+        height: 3;
+        color: {bridge.MUTED};
+        content-align: left middle;
+    }}
+    /* `min-height` rather than `height`: like Switch, an Input computes its own
+       from the border, and that wins over an explicit height set here. */
+    .field-row > Input {{
+        min-height: 3;
+    }}
+    /* A Switch reports a content height of 1 through `get_content_height` and
+       Textual honours that over an explicit height, so it cannot be stretched
+       to three rows. Centring it in the row instead lines it up with the
+       label, which is the thing that was actually wrong. */
+    .field-row > Switch {{
+        align-vertical: middle;
+    }}
+
+    .controls {{ height: auto; padding: 0 1 1 1; }}
+    .controls Button {{ margin: 0 1 0 0; min-width: 12; }}
     """
 
     # Between screens: Tab/Shift+Tab, and `]`/`[` everywhere.
@@ -194,6 +224,18 @@ class PonishaTUI(App):
         Binding("r", "refresh_status", "refresh", show=False),
         Binding("m", "menu", "menu", show=False),
     ]
+
+    def compose(self) -> ComposeResult:
+        """Chrome around every screen: a title bar and a key legend.
+
+        The footer is not decoration. Without it nothing told the operator which
+        keys exist — `s` starts and stops the bot, and the only way to discover
+        that was to read the source. Textual builds the legend from BINDINGS, so
+        a new binding shows up here on its own.
+        """
+        from textual.widgets import Footer, Header
+        yield Header()
+        yield Footer()
 
     SCREEN_CLASSES: list = []          # filled by the entry point
 
