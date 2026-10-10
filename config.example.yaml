@@ -1,56 +1,146 @@
-# Copy this file to config.yaml and fill in your own secrets.
-# config.yaml is gitignored — never commit real tokens/keys.
+# Template for config.yaml — copy it and fill in your own values:
+#
+#     cp config.example.yaml config.yaml
+#
+# config.yaml is gitignored; never commit real tokens or keys. This file is the
+# annotated reference, so explanation lives here. The dashboard's Save button
+# rewrites config.yaml from its own dict and drops every comment in it, which is
+# why the notes are not there.
+
 telegram:
+  # Both can be supplied through the environment instead, which takes
+  # precedence: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. That is how the systemd
+  # unit passes them on a server.
   bot_token: "REPLACE_WITH_BOTTOKEN_FROM_BOTFATHER"
   chat_id: "REPLACE_WITH_YOUR_CHAT_ID"
+
 search:
+  # Your skills. These must match ponisha's own skill strings exactly — the
+  # settings screen has a picker that lists them, so copying from there is
+  # safer than typing. Matching is case- and whitespace-insensitive.
+  #
+  # EMPTY MEANS NO FILTER: an empty list lets every listing through the
+  # pre-filter, so the bot works on the whole site rather than your field. Fill
+  # it in before running for real.
   skills:
   - Python
   - Django
   - پایتون (Python)
   - جنگو (Django)
+
 monitor:
+  # Seconds between polls. The settings screen clamps this to 10–3600. Shorter
+  # means a fresher listing but more load on ponisha and more chances to be
+  # rate-limited.
   refresh_interval: 60
+  # Listing pages fetched per cycle. More pages finds older projects; the
+  # newest ones are on page 1.
   max_pages: 3
+  # A project posted within this many minutes is processed before older ones,
+  # so the bot reaches fresh listings before the competition does.
   priority_window_minutes: 5
+
 bid:
-  budget_min: 0
+  # Your own price floor and ceiling. They are not filters: a low-budget project
+  # is not rejected, the price simply does not go below the floor. The
+  # heuristic engine uses max(budget_min, 2,000,000) as its hard floor, and
+  # budget_max caps the budget midpoint before any competition adjustment.
+  budget_min: 2000000
   budget_max: 25000000
+  # Proposal text pasted into the bid form on the heuristic path. The AI writes
+  # its own proposal per project; this file is the fallback.
   proposal_template: descriptions.txt
+  # Minimum skill overlap for the heuristic engine. 0.5 = half the project's
+  # skills must be yours.
   min_skill_match: 0.5
+  # THE SAFETY SWITCH. true = notify only; nothing is ever submitted to
+  # ponisha. Leave it on until you have watched a full cycle.
   dry_run: true
+  # Stop when this few proposals remain, so the quota is not spent to the last
+  # one. The bot sends an alert and halts.
   min_remaining_proposals: 2
+  # Heuristic engine only. Applied to a 7,000,000 base for illustration:
   competitive_pricing:
+    # 15 bids or more -> the discount below fires. Between 5 and 14 bids none
+    # of these apply.
     high_competition_threshold: 15
-    urgency_premium_percent: 20
-    premium_badge_multiplier: 1.15
-    low_competition_discount_percent: 10
+    # 7,000,000 -> 5,950,000
     high_competition_discount_percent: 15
+    # Fewer than 5 bids -> the price goes UP. Despite the name this is a
+    # low-competition premium: 7,000,000 -> 7,700,000
+    low_competition_discount_percent: 10
+    # «فوری» badge: 7,000,000 -> 8,400,000. Applied after the competition
+    # adjustment, so it lands on top of it.
+    urgency_premium_percent: 20
+    # «متمایز» / «برجسته» / «حرفه‌ای»: 7,000,000 -> 8,049,999 (int() truncates)
+    premium_badge_multiplier: 1.15
+
 browser:
+  # true on a machine with no display. Login by SMS code works headlessly; the
+  # browser login path does not.
   headless: false
+  # Open a live Chrome window showing the listing while the monitor runs.
   show_browser: true
+  # Chrome profile directory, to keep a session between runs. null means a
+  # throwaway profile that is cleaned up afterwards.
   user_data_dir: null
+
 ai:
+  # false = the heuristic engine, which needs no network and no key.
   enabled: false
+  # Any OpenAI-compatible endpoint. Open the dashboard's Settings and press
+  # "Test AI" after filling this in.
   base_url: "https://your-router.example/v1"
   api_key: "REPLACE_WITH_YOUR_AI_API_KEY"
   model: "your-model-name"
+  # Below this skill overlap the model is never called, which saves a request on
+  # obviously unrelated work. A listing with NO skill tags skips the gate.
   min_skill_gate: 0.2
+  # Project descriptions are truncated to this many characters before being
+  # sent, to bound the request size.
   max_description_chars: 4000
   temperature: 0.2
-  karlancer_enabled: true
+  # Collect market prices from karlancer.com before deciding. It only feeds the
+  # AI path, so it does nothing while `enabled` above is false — and it calls an
+  # outside site, which is worth knowing on a slow connection.
+  karlancer_enabled: false
   karlancer_max_pages: 2
+
 forex:
+  # Uplifts the AI's price when the dollar moves, so bids track the rial.
   enabled: true
+  # The rate your prices were set against. The move is measured from here, not
+  # from zero: current 235,902 against a 229,000 baseline is +3.01%.
   baseline_usd_rate: 229000
+  # How much of that move reaches the price. 0.5 = +3.01% becomes a factor of
+  # 1.0151. The factor never drops below 1.0, so a stronger rial never takes the
+  # price under the model's estimate.
   sensitivity: 0.5
+  # Only wallex is implemented. Any other value returns no rate and the uplift
+  # is skipped rather than failing the run.
   source: wallex
+
 karlancer:
+  # Ceiling on the AI's price relative to the market average.
   soft_clamp_enabled: true
+  # If the price exceeds average × 3.0 it is clamped. With an average of
+  # 2,600,000 the ceiling is 7,800,000, so a price of 8,000,000 is over it.
   clamp_multiplier: 3.0
+  # Where the price lands after clamping: average × 2.5, so 2,600,000 -> 6,500,000.
   target_multiplier: 2.5
+
 profile:
   name: ""
+  # The single most valuable field for the AI. Everything written here is
+  # treated as a binding instruction: personal rules, experience, rates. The
+  # heuristic engine also reads ranges like "۳-۶ میلیون" or "5-8M" from this
+  # text to estimate a price when a project has no budget stated.
+  #
+  # It does NOT need to repeat the pricing method or the complexity ladder —
+  # those are already in the model's system prompt, and duplicating them only
+  # spends tokens and risks contradicting it.
   about: "Describe your experience, rates, and bid rules for the AI."
-  hourly_min: 0
-  hourly_max: 0
+  # Your rate. Used to estimate hours from a budget, so leaving these at 0 makes
+  # that estimate unavailable.
+  hourly_min: 80000
+  hourly_max: 150000
