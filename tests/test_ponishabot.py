@@ -1209,6 +1209,62 @@ class TuiNavigation(unittest.TestCase):
         self.assertEqual(sent.get("token"), "TYPED-TOKEN",
                          "the test used the saved token, not the typed one")
 
+    def test_connection_test_reports_its_result(self):
+        """The answer must replace "testing…", not leave it on screen forever.
+
+        `call_from_thread` lives on the App, not on a Screen. Nine call sites
+        used `self.call_from_thread`, which raised AttributeError inside the
+        worker thread — so the note stayed on "sending…" and the real outcome
+        was never shown. The thread died silently; nothing surfaced it.
+        """
+        import asyncio
+        from textual.widgets import Button, Static
+
+        async def scenario():
+            app = self._build()
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("3")
+                await pilot.pause()
+                # Point the form at something that cannot work, so the outcome
+                # is a failure — the point is that *an* outcome arrives.
+                app.screen._inputs["telegram_token"].value = "BOGUS-TOKEN"
+                app.screen._inputs["telegram_chat_id"].value = "1"
+                app.screen.query_one("#btn-test-tg", Button).press()
+                await pilot.pause()
+
+                note = app.screen.query_one("#notice", Static)
+                first = str(getattr(note, "content", ""))
+                # Let the worker finish; no blocking sleep, or the event loop
+                # that has to deliver the result never runs.
+                for _ in range(30):
+                    await asyncio.sleep(0.2)
+                    await pilot.pause()
+                    current = str(getattr(note, "content", ""))
+                    if "sending" not in current:
+                        break
+                await pilot.press("q")
+                return first, current
+
+        first, final = self._run(scenario())
+        self.assertIn("sending", first, "the button did not start a test")
+        self.assertNotIn("sending", final,
+                         f"the test never reported a result; still: {final!r}")
+
+    def test_no_screen_calls_call_from_thread_on_itself(self):
+        """Guards the whole class of bug, not just the two buttons.
+
+        `Screen` has no `call_from_thread`; it belongs to `App`. Any new call
+        site using `self.call_from_thread` fails the same silent way.
+        """
+        from ponishabot.tui import screens as screens_mod
+        source = open(screens_mod.__file__, encoding="utf-8").read()
+        offenders = [f"line {n}"
+                     for n, line in enumerate(source.splitlines(), 1)
+                     if "self.call_from_thread" in line]
+        self.assertEqual(offenders, [],
+                         f"call_from_thread on a Screen raises at runtime: {offenders}")
+
     def test_saving_never_touches_the_real_config(self):
         """The test harness must redirect `save` as well as `load`.
 

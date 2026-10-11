@@ -565,7 +565,7 @@ class SettingsScreen(BaseScreen):
             except Exception as e:
                 ok = False
                 logger.error(f"Telegram test error: {e}")
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self._note,
                 "telegram OK — check your chat" if ok
                 else "telegram failed (token, chat id, or the network)",
@@ -592,7 +592,7 @@ class SettingsScreen(BaseScreen):
                     api_key=key, base_url=base_url, model=model).test_connection()
             except Exception as e:
                 ok, detail = False, f"{type(e).__name__}: {e}"
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self._note,
                 f"AI OK ({model})" if ok else f"AI failed: {detail}",
                 "ok" if ok else "err")
@@ -809,10 +809,10 @@ class LoginScreen(BaseScreen):
     def _request(self, mobile: str) -> None:
         result = self.bot.auth.request_otp(mobile)
         if result.get("ok"):
-            self.call_from_thread(self._after_send)
+            self.app.call_from_thread(self._after_send)
         else:
             # The error text comes from ponisha's own API and stays as sent.
-            self.call_from_thread(self._note,
+            self.app.call_from_thread(self._note,
                                   result.get("error", "could not send the code"),
                                   "err")
 
@@ -824,12 +824,12 @@ class LoginScreen(BaseScreen):
         result = self.bot.auth.verify_otp(mobile, otp)
         if result.get("ok"):
             self._mobile = ""
-            self.call_from_thread(self._note, "signed in ✓", "ok")
-            self.call_from_thread(self.query_one("#otp", Input).__setattr__,
+            self.app.call_from_thread(self._note, "signed in ✓", "ok")
+            self.app.call_from_thread(self.query_one("#otp", Input).__setattr__,
                                   "value", "")
-            self.call_from_thread(self.refresh_status)
+            self.app.call_from_thread(self.refresh_status)
         else:
-            self.call_from_thread(self._note,
+            self.app.call_from_thread(self._note,
                                   result.get("error", "invalid code"), "err")
 
     def action_browser_login(self) -> None:
