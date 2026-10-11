@@ -389,6 +389,94 @@ class PassphraseHandling(unittest.TestCase):
         self.assertEqual(self.auth.PonishaAuth()._token_cookies(), [])
 
 
+class SessionRecovery(unittest.TestCase):
+    """`auth()` must not open Chrome when a live OTP token is already stored."""
+
+    def setUp(self):
+        from ponishabot import auth
+        self.auth = auth
+
+    def _auth(self, live=True, cookies=None, derived=None, saved=None):
+        """A PonishaAuth with the network and the browser taken out."""
+        a = self.auth.PonishaAuth.__new__(self.auth.PonishaAuth)
+        a.get_cookies = lambda: cookies or []
+        a.get_access_token = lambda: "jwt"
+        a._token_cookies = lambda: derived or []
+        a._token_is_live = lambda t: live
+        a.save_cookies = lambda c: (saved if saved is not None else []).append(c)
+        a.manual_login = mock.Mock(
+            return_value=[{"name": "pss-at", "value": "z"}])
+        a.calls = a.manual_login
+        return a
+
+    def test_live_token_does_not_open_a_browser(self):
+        """The passphrase only matters for building the cookie.
+
+        Without it `_token_cookies()` is empty, and the old code fell through
+        to `manual_login()` — Chrome plus a ten-minute wait, on a machine
+        holding a token the API was still accepting.
+        """
+        a = self._auth(live=True, derived=[])
+        self.assertTrue(a.auth(interactive=False))
+        a.calls.assert_not_called()
+
+    def test_dead_token_does_fall_back_to_login(self):
+        """The recovery path must not swallow a genuinely dead session."""
+        a = self._auth(live=False)
+        self.assertTrue(a.auth(interactive=False))
+        a.calls.assert_called_once()
+
+    def test_no_cookie_is_written_when_none_can_be_built(self):
+        """No passphrase means no pss-at cookie, so nothing is saved — and the
+        run still returns True, because the token authenticates the REST API
+        the monitor uses for quotas and listings."""
+        written = []
+        a = self._auth(live=True, derived=[], saved=written)
+        self.assertTrue(a.auth(interactive=False))
+        self.assertEqual(written, [])
+
+    def test_built_cookie_is_persisted(self):
+        """When the passphrase is configured the derived cookie is saved, so
+        the browser bid path works too."""
+        written = []
+        a = self._auth(live=True, derived=[{"name": "pss-at", "value": "y"}],
+                       saved=written)
+        self.assertTrue(a.auth(interactive=False))
+        self.assertEqual(len(written), 1)
+
+
+class TokenLiveness(unittest.TestCase):
+    """`_token_is_live` treats only an explicit 401 as dead."""
+
+    def setUp(self):
+        from ponishabot import auth
+        self.auth = auth
+
+    def _probe(self, status=None, raises=False):
+        a = self.auth.PonishaAuth.__new__(self.auth.PonishaAuth)
+        a.get_user_agent = lambda: None
+        with mock.patch.object(self.auth.requests, "get") as get:
+            if raises:
+                get.side_effect = self.auth.requests.RequestException("offline")
+            else:
+                get.return_value = mock.Mock(status_code=status)
+            return a._token_is_live("jwt")
+
+    def test_200_is_live(self):
+        self.assertTrue(self._probe(200))
+
+    def test_401_is_dead(self):
+        self.assertFalse(self._probe(401))
+
+    def test_network_failure_is_not_dead(self):
+        """Forcing a re-login whenever the network hiccups would open Chrome
+        on every offline start."""
+        self.assertTrue(self._probe(raises=True))
+
+    def test_server_error_is_not_dead(self):
+        self.assertTrue(self._probe(503))
+
+
 class PanelLogHandling(unittest.TestCase):
     """The terminal panel's log filter. Pure string work, so it is testable
     without a TTY — which matters because the panel's job is partly to hide
@@ -934,8 +1022,7 @@ class TuiNavigation(unittest.TestCase):
             app = self._build()
             started = []
             app.start_monitor = lambda: started.append(1)
-            # A monitor is required for the button to be willing to start.
-            app.bot.monitor = object()
+            app.bot.has_stored_session = lambda: True
             async with app.run_test(size=(120, 40)) as pilot:
                 await pilot.pause()
                 await pilot.press("1")
@@ -949,6 +1036,98 @@ class TuiNavigation(unittest.TestCase):
 
         self.assertEqual(self._run(scenario()), [1],
                          "the Start button did not start the monitor")
+
+    def test_start_is_not_refused_before_the_first_run(self):
+        """`monitor` is None until start() builds it.
+
+        Gating the button on `bot.monitor is None` therefore refused the very
+        first press every time — on a machine with a valid stored session the
+        button answered "not signed in — open Login first" and nothing could
+        get past it. The gate is the stored session, not a built monitor.
+        """
+        from textual.widgets import Button
+
+        async def scenario():
+            app = self._build()
+            started = []
+            app.start_monitor = lambda: started.append(1)
+            app.bot.monitor = None                       # fresh launch
+            app.bot.has_stored_session = lambda: True    # but a token is stored
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("1")
+                await pilot.pause()
+                app.screen.query_one("#btn-start", Button).press()
+                await pilot.pause()
+                from textual.widgets import Static
+                note = str(app.screen.query_one("#notice", Static).render())
+                await pilot.press("q")
+                return started, note
+
+        started, note = self._run(scenario())
+        self.assertEqual(started, [1],
+                         "Start must work before a monitor has been built")
+        self.assertNotIn("not signed in", note)
+
+    def test_start_is_refused_with_nothing_stored(self):
+        """The gate still holds when there is genuinely nothing to sign in
+        with — otherwise the monitor would be built and open Chrome."""
+        from textual.widgets import Button
+
+        async def scenario():
+            app = self._build()
+            started = []
+            app.start_monitor = lambda: started.append(1)
+            app.bot.monitor = None
+            app.bot.has_stored_session = lambda: False
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("1")
+                await pilot.pause()
+                app.screen.query_one("#btn-start", Button).press()
+                await pilot.pause()
+                from textual.widgets import Static
+                note = str(app.screen.query_one("#notice", Static).render())
+                await pilot.press("q")
+                return started, note
+
+        started, note = self._run(scenario())
+        self.assertEqual(started, [], "nothing stored must not start the bot")
+        self.assertIn("not signed in", note)
+
+    def test_login_screen_distinguishes_stored_from_verified(self):
+        """A revoked-but-stored cookie was labelled "valid".
+
+        The screen that exists to fix a dead session was the one place that
+        reported everything was fine.
+        """
+        async def scenario():
+            app = self._build()
+            app.bot.has_valid_session = lambda: False
+            app.bot.auth.get_cookies = lambda: [{"name": "pss-at", "value": "x"}]
+            app.bot.auth.get_access_token = lambda: None
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                await pilot.press("4")               # menu -> login
+                await pilot.pause()
+                from textual.widgets import Static
+                # Rendered without the background verification thread: the
+                # screen must be honest before that check lands.
+                screen = app.screen
+                screen._verified = None
+                screen.refresh_status()
+                pending = str(screen.query_one("#session", Static).render())
+                screen._set_verified(False)
+                rejected = str(screen.query_one("#session", Static).render())
+                await pilot.press("q")
+                return pending, rejected
+
+        pending, rejected = self._run(scenario())
+        self.assertIn("checking", pending,
+                      f"unverified session must not claim to be valid: {pending!r}")
+        self.assertIn("not accepted", rejected,
+                      f"a stored-but-rejected session must say so: {rejected!r}")
+
 
     def test_stop_button_is_disabled_until_running(self):
         """The buttons track state, so it is visible at a glance whether the
@@ -1487,6 +1666,7 @@ class TuiFallback(unittest.TestCase):
         fake_auth.get_cookies.return_value = [{"name": "pss-at", "value": "x"}]
         fake_auth._probe_session.return_value = False     # stored but revoked
         fake_auth._token_cookies.return_value = []
+        fake_auth.has_live_token.return_value = False     # and no live OTP token
         app = BotApp.__new__(BotApp)
         app.auth = fake_auth
 
@@ -1513,6 +1693,141 @@ class TuiFallback(unittest.TestCase):
         app = BotApp.__new__(BotApp)
         app.auth = fake_auth
         self.assertTrue(app.has_valid_session())
+
+    def test_live_otp_token_reads_as_a_session_without_a_passphrase(self):
+        """Turning the OTP token into a pss-at cookie needs the passphrase.
+
+        Without one, `_token_cookies()` returns nothing — and this used to be
+        the end of the check, so a token the API was still happily accepting
+        was reported as no session at all. The plain run then refused to start
+        and the TUI's Start button said "not signed in", on a machine whose
+        only problem was a missing passphrase.
+        """
+        from ponishabot.app import BotApp
+        fake_auth = mock.Mock()
+        fake_auth.get_cookies.return_value = []
+        fake_auth._token_cookies.return_value = []        # no passphrase
+        fake_auth.has_live_token.return_value = True      # but the API says yes
+        app = BotApp.__new__(BotApp)
+        app.auth = fake_auth
+        self.assertTrue(app.has_valid_session(),
+                        "a live OTP token is a session even with no passphrase")
+
+    def test_no_passphrase_and_no_token_is_not_a_session(self):
+        """The fallback must not turn "nothing stored" into a session."""
+        from ponishabot.app import BotApp
+        fake_auth = mock.Mock()
+        fake_auth.get_cookies.return_value = []
+        fake_auth._token_cookies.return_value = []
+        fake_auth.has_live_token.return_value = False
+        app = BotApp.__new__(BotApp)
+        app.auth = fake_auth
+        self.assertFalse(app.has_valid_session())
+
+    def test_has_stored_session_does_not_probe(self):
+        """Cheap enough for a button handler on the UI thread.
+
+        `has_valid_session()` calls ponisha, so using it as the Start button's
+        gate would freeze the interface for a request timeout — and on a
+        machine that cannot reach ponisha it would refuse to start a bot that
+        is perfectly able to run.
+        """
+        from ponishabot.app import BotApp
+        fake_auth = mock.Mock()
+        fake_auth.get_cookies.return_value = [{"name": "pss-at", "value": "x"}]
+        fake_auth.get_access_token.return_value = None
+        app = BotApp.__new__(BotApp)
+        app.auth = fake_auth
+        self.assertTrue(app.has_stored_session())
+        fake_auth._probe_session.assert_not_called()
+
+        fake_auth.get_cookies.return_value = []
+        fake_auth.get_access_token.return_value = "jwt"
+        self.assertTrue(app.has_stored_session(),
+                        "an OTP token alone counts as stored")
+
+        fake_auth.get_access_token.return_value = None
+        self.assertFalse(app.has_stored_session())
+
+
+class SessionValidityCache(unittest.TestCase):
+    """The verified session verdict, cached for the dashboard.
+
+    `has_cookies` only reports what is stored. ponisha can revoke a cookie at
+    any time, so the UI must not read it as "signed in" — a dead cookie was
+    rendering as ready-to-bid on the dashboard and as "valid" on the login
+    screen, so the two places that could have told the operator to re-login
+    both reported everything was fine.
+    """
+
+    def setUp(self):
+        from ponishabot import botstate
+        self.botstate = botstate
+        self.saved = dict(botstate._session_cache)
+        self.saved_app = botstate._app
+        botstate._session_cache.update(
+            {"valid": None, "checked_at": 0.0, "in_flight": False})
+
+    def tearDown(self):
+        self.botstate._session_cache.update(self.saved)
+        self.botstate._app = self.saved_app
+
+    def test_unknown_is_not_dead(self):
+        """None means "not checked yet", and must not render as failure — the
+        probe needs a network round trip, so there is a window on every boot."""
+        self.assertIsNone(self.botstate.session_validity())
+
+    def test_verdict_is_served_from_the_cache(self):
+        """The probe calls ponisha; the request path must not wait on it."""
+        self.botstate._session_cache["valid"] = True
+        self.assertTrue(self.botstate.session_validity())
+        self.botstate._session_cache["valid"] = False
+        self.assertFalse(self.botstate.session_validity())
+
+    def test_probe_is_rate_limited_after_a_failure(self):
+        """A probe that dies instantly (offline) must not respawn on every
+        status poll — that spawns a thread every couple of seconds.
+
+        Counts spawn attempts rather than reading `in_flight`: the worker
+        clears that flag as soon as it finishes, so an assertion on it passes
+        whether or not a thread was ever started — a mutation that deleted the
+        cooldown survived the first version of this test.
+        """
+        import time as _t
+        cache = self.botstate._session_cache
+        cache["checked_at"] = _t.time()      # a check just happened
+        cache["valid"] = None
+        self.botstate._app = object()        # a probe would have something to do
+        try:
+            with mock.patch.object(self.botstate.threading, "Thread") as fake:
+                self.botstate._session_probe_async()
+                self.assertEqual(fake.call_count, 0,
+                                 "a probe inside the cooldown must not start")
+        finally:
+            self.botstate._app = None
+
+    def test_probe_runs_when_the_cooldown_expires(self):
+        """The guard must gate retries, not disable the probe entirely."""
+        import time as _t
+        cache = self.botstate._session_cache
+        cache["checked_at"] = _t.time() - 61
+        self.botstate._app = object()
+        try:
+            with mock.patch.object(self.botstate.threading, "Thread") as fake:
+                self.botstate._session_probe_async()
+                self.assertEqual(fake.call_count, 1,
+                                 "an expired cooldown must start a probe")
+        finally:
+            self.botstate._app = None
+            cache["in_flight"] = False
+
+    def test_status_snapshot_exposes_the_verdict(self):
+        self.botstate._session_cache["valid"] = True
+        snap = self.botstate.status_snapshot()
+        self.assertIn("session_valid", snap,
+                      "the dashboard needs the verified half, not just stored")
+        self.assertTrue(snap["session_valid"])
+        self.assertIn("has_cookies", snap)
 
 
 class ConfigBanner(unittest.TestCase):

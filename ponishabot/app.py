@@ -68,6 +68,17 @@ class BotApp:
         """If no cookie is stored, open Chrome for manual login."""
         return self.auth.auth(interactive=interactive)
 
+    def has_stored_session(self) -> bool:
+        """Whether anything usable is stored to authenticate with.
+
+        `has_valid_session()` is the honest answer but it probes ponisha first,
+        so it can block for the length of a request timeout. A button handler
+        runs on the UI thread and cannot afford that, so this answers the
+        cheaper question instead: is there a cookie or an OTP token to try at
+        all. `start()` then does the real verification on its worker thread.
+        """
+        return bool(self.auth.get_cookies() or self.auth.get_access_token())
+
     def has_valid_session(self) -> bool:
         """Whether a usable session exists, without opening a browser.
 
@@ -83,7 +94,13 @@ class BotApp:
             return True
         # An OTP login stores a bearer token rather than cookies; the auth layer
         # can still synthesise a working session from it without a browser.
-        return bool(self.auth._token_cookies())
+        if self.auth._token_cookies():
+            return True
+        # Synthesising that cookie needs the pss-at passphrase. Without one the
+        # call above returns nothing, and this used to answer "no session" for a
+        # token the API was still accepting — which sent the plain run down the
+        # "not authenticated" path and started nothing.
+        return self.auth.has_live_token()
 
     # ─── Status ───
     def is_running(self) -> bool:

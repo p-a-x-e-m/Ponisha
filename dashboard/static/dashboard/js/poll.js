@@ -174,9 +174,20 @@
       bidBtn.disabled = s.dry_run || !hasSel || (s.busy && s.busy.bid);
     }
     if (hint) {
-      hint.textContent = s.dry_run
-        ? "DRY_RUN روشن است — بید واقعی نمی‌زند"
-        : (s.has_cookies ? "آماده بید" : "ابتدا Login");
+      // `has_cookies` only means something is stored; ponisha may have revoked
+      // it. Only the verified verdict may say the bot is ready to bid.
+      const ready = s.session_valid === true;
+      if (s.dry_run) {
+        hint.textContent = "DRY_RUN روشن است — بید واقعی نمی‌زند";
+      } else if (s.session_valid === null || s.session_valid === undefined) {
+        hint.textContent = "در حال بررسی نشست…";
+      } else if (ready) {
+        hint.textContent = "آماده بید";
+      } else {
+        hint.textContent = s.has_cookies
+          ? "نشست ذخیره‌شده معتبر نیست — دوباره Login"
+          : "ابتدا Login";
+      }
     }
 
     // NOTE: the banner is opened by the Login button (OTP form) — status

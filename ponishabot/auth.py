@@ -514,18 +514,61 @@ class PonishaAuth:
         if cookies:
             logger.warning("Stored cookies appear invalid/expired — re-login required")
 
-        # An OTP login stores only a bearer token. Derive the site cookie from
-        # it so the bot can run without a browser (no display on a VPS).
-        derived = self._token_cookies()
-        if derived and self._probe_session(derived):
-            logger.info("Session rebuilt from stored OTP token (no browser needed)")
-            self.save_cookies(derived)
+        # An OTP login stores a bearer token rather than browser cookies, so
+        # ask the API about that token directly. Turning it into a `pss-at`
+        # cookie needs the passphrase, and without one the old code fell
+        # straight through to `manual_login()` — which opens Chrome and waits
+        # up to ten minutes for a sign-in nobody needed, while a perfectly
+        # live token sat in the database.
+        token = self.get_access_token()
+        if token and self._token_is_live(token):
+            derived = self._token_cookies()
+            if derived:
+                logger.info("Session rebuilt from stored OTP token (no browser needed)")
+                self.save_cookies(derived)
+            else:
+                # Honest about the limit: the REST API (quota) and the public
+                # listing pages work, the browser bid form does not, because
+                # the site reads its session from the cookie.
+                logger.warning(
+                    "OTP token is live, but no pss-at passphrase is configured, "
+                    "so it cannot be turned into a browser session — monitoring "
+                    "works, bidding in the browser will not")
             return True
 
         logger.info("Manual login required")
         cookies = self.manual_login(interactive=interactive)
         self.save_cookies(cookies)
         return True
+
+    def _token_is_live(self, token: str) -> bool:
+        """Is this bearer token still accepted by ponisha's API?
+
+        An explicit 401 is the only answer that means "dead". Failures that are
+        not the API's verdict (network flake, WAF, a 5xx) must not force a
+        re-login — that would open a browser on every offline start.
+        """
+        try:
+            resp = requests.get(
+                f"{self.API_BASE}/users/me",
+                headers={"Authorization": f"Bearer {token}",
+                         "Accept": "application/json",
+                         "User-Agent": self.get_user_agent() or USER_AGENT},
+                timeout=15)
+        except requests.RequestException:
+            return True  # network flake — do not force re-login
+        if resp.status_code == 200:
+            return True
+        if resp.status_code == 401:
+            logger.warning("Stored OTP token rejected by the API (401) — "
+                           "re-login required")
+            return False
+        return True  # unexpected status (5xx, WAF) — do not force re-login
+
+    def has_live_token(self) -> bool:
+        """Whether a stored OTP token still authenticates with the API."""
+        token = self.get_access_token()
+        return bool(token) and self._token_is_live(token)
 
     def _probe_session(self, cookies: List[Dict]) -> bool:
         """Is the stored cookie still an accepted session?
@@ -545,7 +588,21 @@ class PonishaAuth:
         try:
             token = self._decrypt_pss_at(enc)
         except Exception as e:
-            logger.warning(f"Stored pss-at cookie is unreadable ({e}) — re-login required")
+            # Say which of the two causes this is. Reporting "re-login required"
+            # for a missing passphrase sends the operator round a loop: signing
+            # in again produces the same undecryptable cookie, because the
+            # cookie is encrypted with ponisha's passphrase and reading it back
+            # needs that same value here.
+            if not self._TOKEN_PASSPHRASE:
+                logger.warning(
+                    f"Stored pss-at cookie cannot be read and no passphrase is "
+                    f"configured to decrypt it ({type(e).__name__}) — set "
+                    f"{PASSPHRASE_ENV} or token_passphrase in "
+                    f"{os.path.basename(PASSPHRASE_FILE)}; signing in again "
+                    f"will not change this")
+            else:
+                logger.warning(f"Stored pss-at cookie is unreadable ({e}) — "
+                               f"re-login required")
             return False
         if not token:
             return False  # undecryptable cookie cannot be a live session

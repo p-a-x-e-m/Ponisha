@@ -33,6 +33,9 @@ _projects_lock = threading.Lock()
 
 # Live dashboard stats (never fetch network inside status_snapshot itself)
 _quota_cache = {"remaining": None, "fetched_at": 0.0, "in_flight": False}
+# Verified session state, refreshed in the background. `valid` is None until
+# the first probe answers, so callers can tell "unknown" from "dead".
+_session_cache = {"valid": None, "checked_at": 0.0, "in_flight": False}
 _bid_count_cache = {"value": None}   # pre-start bid count, avoids a read per poll
 _usd_cache = {"rate": None, "fetched_at": 0.0}
 _started_at: Optional[int] = None  # epoch ms while monitor is running
@@ -196,6 +199,46 @@ def read_log_tail(since_byte: int = 0, max_bytes: int = 64_000) -> dict:
         return {"since": since_byte, "text": f"[log read error: {e}]\n"}
 
 
+def session_validity() -> "bool | None":
+    """The last verified session verdict: True, False, or None if unknown.
+
+    None is not the same as False — the probe makes a network call, so it has
+    no answer yet on a fresh process. Callers must not render None as "dead".
+    """
+    return _session_cache["valid"]
+
+
+def _session_probe_async() -> None:
+    """Verify the stored session off-thread and cache the verdict.
+
+    `has_cookies` only says a cookie exists — ponisha may already have revoked
+    it, and this machine has exactly that. The dashboard read that flag as
+    "ready to bid", so a dead session looked healthy. The probe makes a network
+    call and so cannot run on the request path; the last verdict is served
+    instead, and refreshed at most every 60s.
+    """
+    app = _app
+    if app is None or _session_cache.get("in_flight"):
+        return
+    if (time.time() - _session_cache["checked_at"]) < 60:
+        return
+    _session_cache["in_flight"] = True
+
+    def worker():
+        try:
+            _session_cache["valid"] = bool(app.has_valid_session())
+        except Exception as e:
+            logger.debug(f"session probe failed: {e}")
+        finally:
+            # Stamped on failure too: a probe that dies instantly (no network)
+            # would otherwise be retried on every status poll, spawning a
+            # thread every couple of seconds for nothing.
+            _session_cache["checked_at"] = time.time()
+            _session_cache["in_flight"] = False
+
+    threading.Thread(target=worker, daemon=True, name="botstate-session").start()
+
+
 def refresh_quota_async() -> None:
     """Fetch remaining proposals off-thread; store in cache + monitor if present."""
     app = _app
@@ -285,6 +328,8 @@ def status_snapshot() -> dict:
     ):
         refresh_quota_async()
 
+    _session_probe_async()
+
     remaining = None
     if app.monitor is not None and app.monitor.remaining_proposals is not None:
         remaining = app.monitor.remaining_proposals
@@ -320,7 +365,10 @@ def status_snapshot() -> dict:
         "ai_enabled": bool(cfg.ai_enabled),
         # A valid session is either stored cookies (browser login) or a Bearer
         # token from the OTP login flow — either one means we can talk to ponisha.
+        # This is the "stored" half only; `session_valid` is the verified half
+        # and is what the UI must use to decide whether bidding is possible.
         "has_cookies": bool(app.auth.get_cookies()) or bool(app.auth.get_access_token()),
+        "session_valid": _session_cache["valid"],
         "refresh_interval": cfg.refresh_interval,
         "event_seq": latest_event_id(),
     }

@@ -264,7 +264,13 @@ class DashboardScreen(BaseScreen):
             self.tui.notify("stopping…", "info")
             self.tui.stop_monitor()
         else:
-            if self.bot.monitor is None:
+            # `self.bot.monitor` is only built by start()/build_monitor(), so on
+            # a fresh launch it is None whether or not a session is stored — the
+            # first press of Start therefore always answered "not signed in",
+            # even with a valid OTP token in the database, and there was no way
+            # past it. The real signing-in happens on the worker thread start()
+            # already spawns.
+            if not self.bot.has_stored_session():
                 self.tui.notify("not signed in — open Login first", "err")
                 return
             self.tui.notify("starting…", "ok")
@@ -277,9 +283,11 @@ class DashboardScreen(BaseScreen):
         self.refresh_status()
 
     def action_login(self) -> None:
-        if self.bot.monitor is None:
-            self.tui.notify("not signed in — open Login first", "err")
-            return
+        """`l` / Sign in: the browser path, which waits for a manual sign-in.
+
+        Gated on a stored session for the same reason as Start — `monitor` is
+        None before the first start, so this used to refuse every time.
+        """
         threading.Thread(target=self.bot.open_login_browser, daemon=True).start()
         self.tui.notify("opening the login window…", "info")
 
@@ -760,15 +768,56 @@ class LoginScreen(BaseScreen):
 
     def on_mount(self) -> None:
         self._mobile = ""
+        self._verified = None          # None = not checked yet
         self.refresh_status()
         self.query_one("#mobile", Input).focus()
+        # Verify once, off the UI thread. `has_valid_session()` calls ponisha,
+        # and this screen is redrawn on a one-second tick — probing from
+        # `refresh_status` would freeze the interface for the length of a
+        # request timeout on every tick.
+        threading.Thread(target=self._verify_session,
+                         daemon=True, name="tui-session").start()
+
+    def _verify_session(self) -> None:
+        try:
+            ok = self.bot.has_valid_session()
+        except Exception as e:
+            logger.debug(f"session check failed: {type(e).__name__}: {e}")
+            return
+        # The probe can outlive the screen — it waits on a request, and the
+        # operator may sign in (which remounts this screen) or quit first.
+        # Touching `self.app` or calling `call_from_thread` on a torn-down app
+        # raises instead of posting, so quitting mid-check used to print a
+        # traceback out of a daemon thread after a clean exit.
+        try:
+            if not self.is_mounted:
+                return
+            self.app.call_from_thread(self._set_verified, ok)
+        except Exception as e:
+            logger.debug(f"session result discarded: {type(e).__name__}: {e}")
+
+    def _set_verified(self, ok: bool) -> None:
+        self._verified = ok
+        self.refresh_status()
 
     def refresh_status(self) -> None:
-        snap = self.tui.snapshot()
-        ok = snap.get("has_cookies")
+        """Stored/verified, kept distinct.
+
+        Reading `has_cookies` alone labelled a revoked-but-stored cookie
+        "valid", so the one screen that could fix the session said nothing was
+        wrong. The background check above supplies the verified half.
+        """
+        stored = bool(self.tui.snapshot().get("has_cookies"))
+        ok = self._verified is True
+        if ok:
+            label = "valid"
+        elif self._verified is False:
+            label = ("stored but not accepted — sign in below" if stored
+                     else "none — sign in below")
+        else:
+            label = "stored — checking…" if stored else "none — sign in below"
         self.query_one("#session", Static).update(
-            f"session: [b {bridge.OK if ok else bridge.DANGER}]"
-            f"{'valid' if ok else 'invalid — sign in below'}[/]\n"
+            f"session: [b {bridge.OK if ok else bridge.DANGER}]{label}[/]\n"
             f"[{bridge.MUTED_2}]OTP needs no browser. "
             f"\"Sign in with browser\" opens Chrome.[/]")
 

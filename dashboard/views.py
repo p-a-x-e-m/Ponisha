@@ -48,7 +48,11 @@ def index(request):
         "budget_max": int(c.budget_max or 0),
         "refresh_interval": int(c.refresh_interval or 0),
         "ai_enabled": bool(c.ai_enabled),
-        "has_cookies": bool(app.auth.get_cookies()),
+        # Stored, not verified. ponisha can revoke a cookie at any time, so the
+        # template must not read this as "signed in" — `session_valid` carries
+        # the verified answer (None until the background probe reports).
+        "has_cookies": bool(app.auth.get_cookies()) or bool(app.auth.get_access_token()),
+        "session_valid": botstate.session_validity(),
     }
     return render(request, "dashboard/index.html", {"active": "home", "summary": summary})
 

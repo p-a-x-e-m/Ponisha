@@ -303,9 +303,12 @@ Start · Stop · Sign in — و دکمه‌ها با وضعیت واقعی هم�
 2. اگر کوکی نبود یا مرده بود، توکن OTP ذخیره‌شده را به کوکی `pss-at` تبدیل می‌کند.
 3. فقط در نهایت سراغ کروم می‌رود.
 
-> **تشخیص «لاگین شد یا نه»:** در داشبورد نوار وضعیت `has_cookies` را چک کنید؛ این فیلد
-> هم کوکی مرورگر را می‌پذیرد هم توکن OTP را. برای `pss-at` به `PONISHA_TOKEN_PASSPHRASE`
-> نیاز است (اگر تعریف نشود، رمز پیش‌فرض داخل کد استفاده می‌شود).
+> **تشخیص «لاگین شد یا نه»:** در داشبورد نوار وضعیت و در صفحه Login عبارت session
+> را ببینید. دو حالت را جدا نشان می‌دهد: «stored» یعنی چیزی ذخیره شده، و
+> «valid / not accepted» یعنی جواب واقعی سرور. کوکی مرده ارزشی ندارد، پس فقط
+> حالت دوم مهم است. برای خواندن یا ساختن کوکی `pss-at` به `PONISHA_TOKEN_PASSPHRASE`
+> نیاز است (اگر تعریف نشود، کوکی ساخته نمی‌شود — راه‌اندازی بدون آن هم کار می‌کند،
+> فقط بید از طریق مرورگر انجام نمی‌شود).
 
 ---
 
@@ -327,7 +330,7 @@ Start · Stop · Sign in — و دکمه‌ها با وضعیت واقعی هم�
 | `DJANGO_ALLOWED_HOSTS` | `web/settings.py` | `127.0.0.1,localhost` | جداشده با کاما |
 | `BOT_HOST` | `manage.py bot` | `127.0.0.1` | آدرس bind |
 | `BOT_PORT` | `manage.py bot` | `8000` | پورت |
-| `PONISHA_TOKEN_PASSPHRASE` | `auth.py` | رمز پیش‌فرض داخل کد | رمزگشایی کوکی `pss-at` |
+| `PONISHA_TOKEN_PASSPHRASE` | `auth.py` | (خالی) | رمزگشایی و ساخت کوکی `pss-at`؛ بدون آن مسیر مرورگر کار نمی‌کند |
 
 > ⚠️ **فایل `.env` بارگذاری نمی‌شود.** هیچ `python-dotenv`ای در وابستگی‌ها نیست و هیچ
 > پارسر دستی‌ای هم وجود ندارد. ساختن یک فایل `.env` در ریشهٔ پروژه **هیچ اثری ندارد**.
@@ -643,9 +646,10 @@ cp config.example.yaml config.yaml
   [deploy/bot.env.example](deploy/bot.env.example).
 - **`bid.dry_run` پیش‌فرض `true` است.** تا وقتی عمداً خاموشش نکرده‌اید، هیچ پیشنهادی
   فرستاده نمی‌شود. این تنها کلید ایمنی در برابر سوتفاهم است.
-- `PONISHA_TOKEN_PASSPHRASE` را خالی نگذارید: مقدار خالیِ تعریف‌شده با «تعریف‌نشده»
-  فرق دارد و در نسخه‌های قدیمی باعث می‌شد سرویس با کلید خالی رمزگذاری کند در حالی که
-  اجرای دستی با کلید پیش‌فرض کار می‌کرد.
+- `PONISHA_TOKEN_PASSPHRASE` **رمز پیش‌فرض ندارد** و هرگز نداشته. تعریف‌نشدن یعنی
+  «کوکی خوانده نمی‌شود»، نه «از یک مقدار جایگزین استفاده کن». پس فقط با توکن OTP
+  نمی‌توان نشست مرورگر ساخت. مقدار تعریف‌شدهٔ خالی هم مثل تعریف‌نشده رد می‌شود تا
+  هیچ‌وقت با کلید خالی رمزگذاری نشود.
 
 ---
 
@@ -687,8 +691,8 @@ sudo systemctl enable --now ponishabot
 |---|---|---|
 | صفحه باز می‌شود ولی **هیچ دکمه‌ای کار نمی‌کند** | `DJANGO_DEBUG=0` بدون `insecure` → فایل‌های استاتیک 404 می‌شوند و `poll.js` اصلاً لود نمی‌شود | `curl -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/static/dashboard/js/poll.js` — اگر 404 بود، سرویس را با `manage.py bot` (نه `runserver` خام) بالا بیاورید |
 | در لاگ «موفق» دیده می‌شود ولی پیشنهاد به پونیشا نرسیده | فیلدهای React با `value` پر می‌شوند نه با تایپ، یا سیگنال موفقیت به المان دیگری خورده | **همیشه با «پیشنهادهای من» در سایت تأیید کنید، نه با لاگ ربات.** لاگ فقط زمانی قابل اعتماد است که سایت هم تأیید کند |
-| سرویس systemd کار نمی‌کند ولی اجرای دستی درست است | `PONISHA_TOKEN_PASSPHRASE=` در `deploy/bot.env` خالی است | یا کاملاً حذفش کنید، یا مقدار واقعی بگذارید |
-| پیام «نشست رد شد (401)» یا `has_cookies: false` | کوکی یا توکن OTP منقضی شده | دوباره از داشبورد OTP بگیرید؛ نیازی به کروم نیست |
+| «cookies cannot be read … set PONISHA_TOKEN_PASSPHRASE» در لاگ | رمز تعریف نشده؛ کوکی را نمی‌توان خواند | اگر بید مرورگری می‌خواهید رمز را بگذارید، وگرنه نادیده بگیرید — مانیتور کار می‌کند |
+| پیام «نشست رد شد (401)» یا session = `not accepted` | کوکی یا توکن OTP منقضی شده | دوباره از صفحه Login کد OTP بگیرید؛ نیازی به کروم نیست |
 | «AI failed» در لاگ | endpoint یا کلید در دسترس نیست | نگران نباشید — خودکار به هیوریستیک برمی‌گردد. برای تست از **تست AI** در Settings استفاده کنید |
 | نرخ دلار `—` نشان داده می‌شود | اتصال به Wallex قطع است | فقط همان افزایش قیمت رد می‌شود؛ بید ادامه پیدا می‌کند. `forex.enabled: false` کنید تا پیام تکراری نگیرید |
 | ربات با پیام «سهمیه کم» متوقف شد | تا `min_remaining_proposals` رسیده | هدفمند است تا سهمیهٔ محدود سوخت نشود؛ اگر سهمیه را بالا بردید، `min_remaining_proposals` را هم کم کنید |
@@ -1035,9 +1039,12 @@ browser.
    token.
 3. Only then open Chrome.
 
-> **How to tell whether you are logged in:** check `has_cookies` in the dashboard status
-> strip; it accepts either a browser cookie or an OTP token. Decrypting `pss-at` needs
-> `PONISHA_TOKEN_PASSPHRASE` (the built-in default is used when it is unset).
+> **How to tell whether you are logged in:** the dashboard status strip and the Login
+> screen report two separate things — *stored* means something is saved, and
+> *valid / not accepted* is the server's actual answer. A stored cookie that ponisha
+> has revoked is worthless, so only the second one matters. Reading or building the
+> `pss-at` cookie needs `PONISHA_TOKEN_PASSPHRASE`; with none set no cookie is built
+> at all — the bot still starts and monitors, but cannot bid through the browser.
 
 ---
 
@@ -1059,7 +1066,7 @@ Two layers: **environment variables** (secrets and Django settings) and **`confi
 | `DJANGO_ALLOWED_HOSTS` | `web/settings.py` | `127.0.0.1,localhost` | comma separated |
 | `BOT_HOST` | `manage.py bot` | `127.0.0.1` | bind address |
 | `BOT_PORT` | `manage.py bot` | `8000` | port |
-| `PONISHA_TOKEN_PASSPHRASE` | `auth.py` | built-in default | decrypting the `pss-at` cookie |
+| `PONISHA_TOKEN_PASSPHRASE` | `auth.py` | (empty) | reading and building the `pss-at` cookie; without it the browser path is unavailable |
 
 > ⚠️ **A `.env` file is never loaded.** There is no `python-dotenv` in the dependencies
 > and no hand-rolled parser. Creating a `.env` in the repo root **does nothing**.
@@ -1378,9 +1385,10 @@ Therefore:
   [deploy/bot.env.example](deploy/bot.env.example).
 - **`bid.dry_run` defaults to `true`.** Until you deliberately turn it off, no proposal
   is ever sent. That is the only guard against a misconfiguration.
-- Do not leave `PONISHA_TOKEN_PASSPHRASE` blank: a defined-but-empty value is not the
-  same as an unset one, and older versions made the service encrypt with an empty key
-  while a manual run used the built-in default.
+- `PONISHA_TOKEN_PASSPHRASE` has **no** built-in default and never had one. An
+  unset value means "cannot read the cookie", not "use a fallback", so an OTP login
+  alone will not produce a browser session. A defined-but-empty value is treated the
+  same as unset — both are refused rather than encrypting with an empty key.
 
 ---
 
@@ -1423,8 +1431,8 @@ cycle (Selenium + AI) can finish. Production runs `DJANGO_DEBUG=0`, and
 |---|---|---|
 | Page loads but **no button does anything** | `DJANGO_DEBUG=0` without `insecure` → static files 404 and `poll.js` never loads | `curl -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/static/dashboard/js/poll.js` — if it is 404, start the service with `manage.py bot`, not a bare `runserver` |
 | Log says success but ponisha received nothing | React inputs filled with `value` instead of typed into, or the success signal matched an unrelated element | **Always verify under "my proposals" on the site, never from the bot's own log.** The log is only trustworthy when the site agrees |
-| systemd service fails but a manual run works | `PONISHA_TOKEN_PASSPHRASE=` in `deploy/bot.env` is empty | remove the line entirely, or set a real value |
-| "session rejected (401)" or `has_cookies: false` | cookie or OTP token expired | take a new OTP from the dashboard — no Chrome needed |
+| "cookies cannot be read … set PONISHA_TOKEN_PASSPHRASE" in the log | no passphrase, so the `pss-at` cookie is unreadable | set one if you need browser bidding; otherwise ignore it — monitoring works |
+| "session rejected (401)" or session = `not accepted` | cookie or OTP token expired | take a new OTP from the Login screen — no Chrome needed |
 | "AI failed" in the log | endpoint or key unreachable | it falls back to the heuristic automatically; use **Test AI** in Settings to verify |
 | USD rate shows `—` | Wallex unreachable | only the uplift is skipped and bidding continues; set `forex.enabled: false` to silence it |
 | Bot stops with "quota low" | reached `min_remaining_proposals` | intentional, so the limited quota is not burned; if you raised the quota, lower `min_remaining_proposals` too |

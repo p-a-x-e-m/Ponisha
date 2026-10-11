@@ -105,7 +105,15 @@
           </div>
           <div class="cfg-row">
             <dt>Session</dt>
-            <dd>{% if summary.has_cookies %}<span class="chip on">cookies</span>{% else %}<span class="chip off">نیاز به Login</span>{% endif %}</dd>
+            {% if summary.session_valid %}
+              <dd><span class="chip on">معتبر</span></dd>
+            {% elif summary.session_valid is None %}
+              <dd><span class="chip">در حال بررسی…</span></dd>
+            {% elif summary.has_cookies %}
+              <dd><span class="chip off">ذخیره شده ولی معتبر نیست — Login</span></dd>
+            {% else %}
+              <dd><span class="chip off">نیاز به Login</span></dd>
+            {% endif %}
           </div>
         </dl>
         {% endif %}
